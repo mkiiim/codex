@@ -42,6 +42,9 @@ use crate::version::CODEX_CLI_VERSION;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::adaptive_wrap_lines;
+use crate::wrapping::line_contains_url_like;
+use crate::wrapping::url_preserving_wrap_options;
+use crate::wrapping::wrap_ranges_trim;
 use base64::Engine;
 use codex_app_server_protocol::McpServerStatus;
 use codex_app_server_protocol::McpServerStatusDetail;
@@ -85,6 +88,7 @@ use ratatui::widgets::Wrap;
 use std::any::Any;
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -465,6 +469,191 @@ impl AgentMessageCell {
             lines,
             is_first_line,
         }
+    }
+
+    fn transcript_wrap_options(&self, width: u16, source_line_index: usize) -> RtOptions<'static> {
+        let initial_indent = if source_line_index == 0 && self.is_first_line {
+            "• ".dim().into()
+        } else {
+            "  ".into()
+        };
+        let base = RtOptions::new(width as usize)
+            .initial_indent(initial_indent)
+            .subsequent_indent("  ".into());
+        if line_contains_url_like(&self.lines[source_line_index]) {
+            url_preserving_wrap_options(base)
+        } else {
+            base
+        }
+    }
+
+    fn transcript_wrapped_rows(&self, width: u16) -> Vec<(usize, Option<Range<usize>>)> {
+        self.lines
+            .iter()
+            .enumerate()
+            .flat_map(|(source_line_index, line)| {
+                let flat: String = line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect();
+                let opts = self.transcript_wrap_options(width, source_line_index);
+                let wrapped_ranges = wrap_ranges_trim(
+                    &flat,
+                    textwrap::Options::new(opts.width)
+                        .line_ending(opts.line_ending)
+                        .break_words(opts.break_words)
+                        .wrap_algorithm(opts.wrap_algorithm)
+                        .word_separator(opts.word_separator)
+                        .word_splitter(opts.word_splitter)
+                        .initial_indent(&opts.initial_indent.to_string())
+                        .subsequent_indent(&opts.subsequent_indent.to_string()),
+                );
+                if wrapped_ranges.is_empty() {
+                    vec![(source_line_index, None)]
+                } else {
+                    wrapped_ranges
+                        .into_iter()
+                        .map(move |range| {
+                            let is_blank = range.is_empty()
+                                || !flat[range.clone()].chars().any(|ch| !ch.is_whitespace());
+                            (source_line_index, (!is_blank).then_some(range))
+                        })
+                        .collect()
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn transcript_line_anchors(&self, width: u16) -> Vec<(usize, usize)> {
+        self.transcript_wrapped_rows(width)
+            .into_iter()
+            .filter_map(|(source_line_index, range)| {
+                let range = range?;
+                let flat: String = self.lines[source_line_index]
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect();
+                Self::last_non_whitespace_byte_offset(&flat, &range)
+                    .map(|source_byte_offset| (source_line_index, source_byte_offset))
+            })
+            .collect()
+    }
+
+    fn last_non_whitespace_byte_offset(text: &str, range: &Range<usize>) -> Option<usize> {
+        text[range.clone()]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !ch.is_whitespace())
+            .map(|(offset, _)| range.start + offset)
+    }
+
+    pub(crate) fn transcript_rendered_line_index_for_anchor(
+        &self,
+        width: u16,
+        source_line_index: usize,
+        source_byte_offset: usize,
+    ) -> Option<usize> {
+        self.transcript_rendered_position_for_anchor(width, source_line_index, source_byte_offset)
+            .map(|(rendered_line_index, _)| rendered_line_index)
+    }
+
+    pub(crate) fn transcript_rendered_position_for_anchor(
+        &self,
+        width: u16,
+        source_line_index: usize,
+        source_byte_offset: usize,
+    ) -> Option<(usize, usize)> {
+        let wrapped_rows = self.transcript_wrapped_rows(width);
+        wrapped_rows
+            .iter()
+            .enumerate()
+            .find(|(_, (line_index, maybe_range))| {
+                let Some(range) = maybe_range else {
+                    return false;
+                };
+                *line_index == source_line_index
+                    && range.start <= source_byte_offset
+                    && source_byte_offset < range.end
+            })
+            .map(|(rendered_line_index, (_, maybe_range))| {
+                let range = maybe_range.as_ref().expect("checked above");
+                (
+                    rendered_line_index,
+                    self.transcript_caret_column(
+                        width,
+                        source_line_index,
+                        source_byte_offset,
+                        &wrapped_rows,
+                        rendered_line_index,
+                        range,
+                    ),
+                )
+            })
+            .or_else(|| {
+                wrapped_rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (line_index, maybe_range))| {
+                        *line_index == source_line_index && maybe_range.is_some()
+                    })
+                    .next_back()
+                    .and_then(|(rendered_line_index, (_, maybe_range))| {
+                        let range = maybe_range.as_ref().expect("filtered above");
+                        (source_byte_offset >= range.end).then_some((
+                            rendered_line_index,
+                            self.transcript_caret_column(
+                                width,
+                                source_line_index,
+                                source_byte_offset,
+                                &wrapped_rows,
+                                rendered_line_index,
+                                range,
+                            ),
+                        ))
+                    })
+            })
+    }
+
+    fn transcript_caret_column(
+        &self,
+        width: u16,
+        source_line_index: usize,
+        source_byte_offset: usize,
+        wrapped_rows: &[(usize, Option<Range<usize>>)],
+        rendered_line_index: usize,
+        range: &Range<usize>,
+    ) -> usize {
+        let flat: String = self.lines[source_line_index]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        let opts = self.transcript_wrap_options(width, source_line_index);
+        let indent_width =
+            if wrapped_rows[..rendered_line_index]
+                .iter()
+                .any(|(line_index, maybe_range)| {
+                    *line_index == source_line_index && maybe_range.is_some()
+                })
+            {
+                opts.subsequent_indent.to_string().width()
+            } else {
+                opts.initial_indent.to_string().width()
+            };
+
+        let anchor_end = if source_byte_offset < flat.len() {
+            source_byte_offset
+                + flat[source_byte_offset..]
+                    .chars()
+                    .next()
+                    .map_or(0, char::len_utf8)
+        } else {
+            flat.len()
+        };
+        let visible_end = anchor_end.min(range.end);
+        indent_width + flat[range.start..visible_end].width()
     }
 }
 

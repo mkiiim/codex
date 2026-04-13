@@ -19,6 +19,7 @@ use std::io::Result;
 use std::sync::Arc;
 
 use crate::chatwidget::ActiveCellTranscriptKey;
+use crate::history_cell::AgentMessageCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::UserHistoryCell;
 use crate::key_hint;
@@ -34,7 +35,9 @@ use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::buffer::Cell;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use ratatui::style::Style;
+use ratatui::style::Styled;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -48,7 +51,8 @@ use ratatui::widgets::Wrap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TranscriptReadPosition {
     pub(crate) cell_index: usize,
-    pub(crate) line_index: usize,
+    pub(crate) source_line_index: usize,
+    pub(crate) source_byte_offset: usize,
 }
 
 pub(crate) enum Overlay {
@@ -432,7 +436,7 @@ impl Renderable for CellRenderable {
 
 struct AssistantCellRenderable {
     cell: Arc<dyn HistoryCell>,
-    selected_line: Option<usize>,
+    selected_anchor: Option<TranscriptReadPosition>,
 }
 
 impl Renderable for AssistantCellRenderable {
@@ -445,30 +449,66 @@ impl Renderable for AssistantCellRenderable {
             area.height,
         );
         let mut lines = self.cell.transcript_lines(content_area.width);
-        if let Some(selected_line) = self.selected_line
-            && let Some(line) = lines.get_mut(selected_line)
+        let highlight_style = Style::default().reversed();
+        let selected_position = self.selected_anchor.and_then(|anchor| {
+            self.cell
+                .as_any()
+                .downcast_ref::<AgentMessageCell>()
+                .and_then(|cell| {
+                    cell.transcript_rendered_position_for_anchor(
+                        content_area.width,
+                        anchor.source_line_index,
+                        anchor.source_byte_offset,
+                    )
+                })
+        });
+        let selected_line = selected_position.map(|(line_index, _)| line_index);
+        if let Some(selected_line) = selected_line
+            && selected_line < area.height as usize
         {
-            let highlight_style = Style::default().reversed();
-            line.style = line.style.patch(highlight_style);
-            for span in &mut line.spans {
-                span.style = span.style.patch(highlight_style);
+            let marker_y = area.y.saturating_add(selected_line as u16);
+            for x in area.x..area.right() {
+                buf[(x, marker_y)].set_style(highlight_style);
+            }
+
+            if let Some(line) = lines.get_mut(selected_line) {
+                line.style = line.style.patch(highlight_style);
+                for span in &mut line.spans {
+                    span.style = span.style.patch(highlight_style);
+                }
             }
         }
-        let p = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
-        p.render(content_area, buf);
-        if let Some(selected_line) = self.selected_line
+        for (line_index, line) in lines.into_iter().enumerate() {
+            let y = content_area.y.saturating_add(line_index as u16);
+            if y >= content_area.bottom() {
+                break;
+            }
+            line.render_ref(Rect::new(content_area.x, y, content_area.width, 1), buf);
+        }
+        if let Some(selected_line) = selected_line
             && selected_line < area.height as usize
             && area.width >= TRANSCRIPT_READ_MARKER_GUTTER_WIDTH
         {
             let marker_y = area.y.saturating_add(selected_line as u16);
-            ">".reversed()
+            Span::from(">")
+                .set_style(highlight_style)
                 .render_ref(Rect::new(area.x, marker_y, 1, 1), buf);
+            if let Some((_, caret_column)) = selected_position {
+                let marker_x = content_area
+                    .x
+                    .saturating_add(caret_column as u16)
+                    .min(content_area.right().saturating_sub(1));
+                Span::from("^")
+                    .set_style(highlight_style.add_modifier(Modifier::BOLD))
+                    .render_ref(Rect::new(marker_x, marker_y, 1, 1), buf);
+            }
         }
     }
 
     fn desired_height(&self, width: u16) -> u16 {
         self.cell
-            .desired_transcript_height(width.saturating_sub(TRANSCRIPT_READ_MARKER_GUTTER_WIDTH))
+            .transcript_lines(width.saturating_sub(TRANSCRIPT_READ_MARKER_GUTTER_WIDTH))
+            .len() as u16
     }
 }
 
@@ -565,10 +605,8 @@ impl TranscriptOverlay {
                 } else if c.as_any().is::<crate::history_cell::AgentMessageCell>() {
                     Box::new(CachedRenderable::new(AssistantCellRenderable {
                         cell: c.clone(),
-                        selected_line: if highlight_cell.is_none() {
-                            read_position
-                                .filter(|position| position.cell_index == i)
-                                .map(|position| position.line_index)
+                        selected_anchor: if highlight_cell.is_none() {
+                            read_position.filter(|position| position.cell_index == i)
                         } else {
                             None
                         },
@@ -737,13 +775,19 @@ impl TranscriptOverlay {
             .enumerate()
             .filter(|(_, cell)| cell.as_any().is::<crate::history_cell::AgentMessageCell>())
             .flat_map(|(cell_index, cell)| {
-                cell.transcript_lines(Self::assistant_content_width(width))
+                cell.as_any()
+                    .downcast_ref::<AgentMessageCell>()
                     .into_iter()
-                    .enumerate()
-                    .map(move |(line_index, _)| TranscriptReadPosition {
-                        cell_index,
-                        line_index,
+                    .flat_map(move |cell| {
+                        cell.transcript_line_anchors(Self::assistant_content_width(width))
                     })
+                    .map(
+                        move |(source_line_index, source_byte_offset)| TranscriptReadPosition {
+                            cell_index,
+                            source_line_index,
+                            source_byte_offset,
+                        },
+                    )
             })
             .collect()
     }
@@ -757,7 +801,19 @@ impl TranscriptOverlay {
         let assistant_positions = self.assistant_positions(width);
         let next_position = self
             .read_position
-            .filter(|position| assistant_positions.contains(position))
+            .and_then(|position| {
+                self.cells
+                    .get(position.cell_index)
+                    .and_then(|cell| cell.as_any().downcast_ref::<AgentMessageCell>())
+                    .and_then(|cell| {
+                        cell.transcript_rendered_line_index_for_anchor(
+                            Self::assistant_content_width(width),
+                            position.source_line_index,
+                            position.source_byte_offset,
+                        )
+                    })
+                    .map(|_| position)
+            })
             .or_else(|| assistant_positions.last().copied());
         if self.read_position != next_position {
             self.read_position = next_position;
@@ -777,12 +833,7 @@ impl TranscriptOverlay {
         }
 
         let current_idx = self
-            .read_position
-            .and_then(|position| {
-                assistant_positions
-                    .iter()
-                    .position(|candidate| candidate == &position)
-            })
+            .current_assistant_position_index(width, &assistant_positions)
             .unwrap_or_else(|| assistant_positions.len().saturating_sub(1));
         let next_idx = if delta.is_negative() {
             current_idx.saturating_sub(delta.unsigned_abs())
@@ -832,7 +883,18 @@ impl TranscriptOverlay {
                 row += 1;
             }
             if cell_index == position.cell_index {
-                return row + position.line_index;
+                let rendered_line_index = cell
+                    .as_any()
+                    .downcast_ref::<AgentMessageCell>()
+                    .and_then(|cell| {
+                        cell.transcript_rendered_line_index_for_anchor(
+                            Self::assistant_content_width(width),
+                            position.source_line_index,
+                            position.source_byte_offset,
+                        )
+                    })
+                    .unwrap_or(0);
+                return row + rendered_line_index;
             }
             row += usize::from(Self::transcript_height_for_cell(cell, width));
         }
@@ -846,10 +908,8 @@ impl TranscriptOverlay {
         }
 
         let assistant_positions = self.assistant_positions(width);
-        if let Some(position) = self.read_position
-            && let Some(current_idx) = assistant_positions
-                .iter()
-                .position(|candidate| candidate == &position)
+        if let Some(current_idx) =
+            self.current_assistant_position_index(width, &assistant_positions)
         {
             self.view.title = format!(
                 "T R A N S C R I P T  {}/{}",
@@ -859,6 +919,49 @@ impl TranscriptOverlay {
         } else {
             self.view.title = "T R A N S C R I P T".to_string();
         }
+    }
+
+    fn current_assistant_position_index(
+        &self,
+        width: u16,
+        assistant_positions: &[TranscriptReadPosition],
+    ) -> Option<usize> {
+        let position = self.read_position?;
+        let current_rendered_line_index = self
+            .cells
+            .get(position.cell_index)
+            .and_then(|cell| cell.as_any().downcast_ref::<AgentMessageCell>())
+            .and_then(|cell| {
+                cell.transcript_rendered_line_index_for_anchor(
+                    Self::assistant_content_width(width),
+                    position.source_line_index,
+                    position.source_byte_offset,
+                )
+            })?;
+
+        assistant_positions
+            .iter()
+            .enumerate()
+            .find_map(|(candidate_idx, candidate)| {
+                (candidate.cell_index == position.cell_index)
+                    .then(|| {
+                        self.cells
+                            .get(candidate.cell_index)
+                            .and_then(|cell| cell.as_any().downcast_ref::<AgentMessageCell>())
+                            .and_then(|cell| {
+                                cell.transcript_rendered_line_index_for_anchor(
+                                    Self::assistant_content_width(width),
+                                    candidate.source_line_index,
+                                    candidate.source_byte_offset,
+                                )
+                            })
+                            .filter(|candidate_rendered_line_index| {
+                                *candidate_rendered_line_index == current_rendered_line_index
+                            })
+                            .map(|_| candidate_idx)
+                    })
+                    .flatten()
+            })
     }
 
     /// Removes and returns the cached live-tail renderable, if present.
@@ -1182,7 +1285,8 @@ mod tests {
             overlay.read_position(),
             Some(TranscriptReadPosition {
                 cell_index: 0,
-                line_index: 1,
+                source_line_index: 1,
+                source_byte_offset: 5,
             })
         );
 
@@ -1206,7 +1310,8 @@ mod tests {
             ))],
             Some(TranscriptReadPosition {
                 cell_index: 0,
-                line_index: 0,
+                source_line_index: 0,
+                source_byte_offset: 4,
             }),
         );
 
@@ -1218,7 +1323,8 @@ mod tests {
             overlay.read_position(),
             Some(TranscriptReadPosition {
                 cell_index: 0,
-                line_index: 0,
+                source_line_index: 0,
+                source_byte_offset: 4,
             })
         );
         let rendered = buffer_to_text(&buf, area);
@@ -1237,7 +1343,8 @@ mod tests {
             ))],
             Some(TranscriptReadPosition {
                 cell_index: 0,
-                line_index: 0,
+                source_line_index: 0,
+                source_byte_offset: 4,
             }),
         );
 
@@ -1245,6 +1352,67 @@ mod tests {
         term.draw(|f| overlay.render(f.area(), f.buffer_mut()))
             .expect("draw");
         assert_snapshot!(term.backend());
+    }
+
+    #[test]
+    fn transcript_overlay_skips_blank_assistant_lines() {
+        let mut overlay = TranscriptOverlay::new(
+            vec![Arc::new(history_cell::AgentMessageCell::new(
+                vec!["alpha".into(), "".into(), "beta".into()],
+                /*is_first_line*/ true,
+            ))],
+            None,
+        );
+
+        let area = Rect::new(0, 0, 60, 10);
+        let mut buf = Buffer::empty(area);
+        overlay.render(area, &mut buf);
+
+        assert_eq!(
+            overlay.read_position(),
+            Some(TranscriptReadPosition {
+                cell_index: 0,
+                source_line_index: 2,
+                source_byte_offset: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn transcript_overlay_restores_saved_anchor_across_width_change() {
+        let cell = Arc::new(history_cell::AgentMessageCell::new(
+            vec!["alpha beta gamma delta epsilon zeta".into()],
+            /*is_first_line*/ true,
+        ));
+        let mut overlay = TranscriptOverlay::new(vec![cell.clone()], None);
+
+        let narrow_area = Rect::new(0, 0, 24, 10);
+        let mut narrow_buf = Buffer::empty(narrow_area);
+        overlay.render(narrow_area, &mut narrow_buf);
+        let narrow_positions = overlay.assistant_positions(narrow_area.width);
+        let saved_anchor = narrow_positions
+            .get(1)
+            .copied()
+            .expect("narrow wrapped line anchor");
+
+        let mut resized_overlay = TranscriptOverlay::new(vec![cell], Some(saved_anchor));
+        let wide_area = Rect::new(0, 0, 80, 10);
+        let mut wide_buf = Buffer::empty(wide_area);
+        resized_overlay.render(wide_area, &mut wide_buf);
+
+        assert_eq!(
+            resized_overlay.read_position(),
+            Some(TranscriptReadPosition {
+                cell_index: 0,
+                source_line_index: 0,
+                source_byte_offset: saved_anchor.source_byte_offset,
+            })
+        );
+        let rendered = buffer_to_text(&wide_buf, wide_area);
+        assert!(
+            rendered.contains("T R A N S C R I P T  1/1"),
+            "expected resized overlay to preserve the saved anchor while mapping it into the merged wrapped line, got: {rendered:?}"
+        );
     }
 
     #[test]

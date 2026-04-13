@@ -45,14 +45,23 @@ use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TranscriptReadPosition {
+    pub(crate) cell_index: usize,
+    pub(crate) line_index: usize,
+}
+
 pub(crate) enum Overlay {
     Transcript(TranscriptOverlay),
     Static(StaticOverlay),
 }
 
 impl Overlay {
-    pub(crate) fn new_transcript(cells: Vec<Arc<dyn HistoryCell>>) -> Self {
-        Self::Transcript(TranscriptOverlay::new(cells))
+    pub(crate) fn new_transcript(
+        cells: Vec<Arc<dyn HistoryCell>>,
+        read_position: Option<TranscriptReadPosition>,
+    ) -> Self {
+        Self::Transcript(TranscriptOverlay::new(cells, read_position))
     }
 
     pub(crate) fn new_static_with_lines(lines: Vec<Line<'static>>, title: String) -> Self {
@@ -102,6 +111,7 @@ const KEY_ESC: KeyBinding = key_hint::plain(KeyCode::Esc);
 const KEY_ENTER: KeyBinding = key_hint::plain(KeyCode::Enter);
 const KEY_CTRL_T: KeyBinding = key_hint::ctrl(KeyCode::Char('t'));
 const KEY_CTRL_C: KeyBinding = key_hint::ctrl(KeyCode::Char('c'));
+const TRANSCRIPT_READ_MARKER_GUTTER_WIDTH: u16 = 2;
 
 // Common pager navigation hints rendered on the first line
 const PAGER_KEY_HINTS: &[(&[KeyBinding], &str)] = &[
@@ -420,6 +430,48 @@ impl Renderable for CellRenderable {
     }
 }
 
+struct AssistantCellRenderable {
+    cell: Arc<dyn HistoryCell>,
+    selected_line: Option<usize>,
+}
+
+impl Renderable for AssistantCellRenderable {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        let content_area = Rect::new(
+            area.x.saturating_add(TRANSCRIPT_READ_MARKER_GUTTER_WIDTH),
+            area.y,
+            area.width
+                .saturating_sub(TRANSCRIPT_READ_MARKER_GUTTER_WIDTH),
+            area.height,
+        );
+        let mut lines = self.cell.transcript_lines(content_area.width);
+        if let Some(selected_line) = self.selected_line
+            && let Some(line) = lines.get_mut(selected_line)
+        {
+            let highlight_style = Style::default().reversed();
+            line.style = line.style.patch(highlight_style);
+            for span in &mut line.spans {
+                span.style = span.style.patch(highlight_style);
+            }
+        }
+        let p = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+        p.render(content_area, buf);
+        if let Some(selected_line) = self.selected_line
+            && selected_line < area.height as usize
+            && area.width >= TRANSCRIPT_READ_MARKER_GUTTER_WIDTH
+        {
+            let marker_y = area.y.saturating_add(selected_line as u16);
+            ">".reversed()
+                .render_ref(Rect::new(area.x, marker_y, 1, 1), buf);
+        }
+    }
+
+    fn desired_height(&self, width: u16) -> u16 {
+        self.cell
+            .desired_transcript_height(width.saturating_sub(TRANSCRIPT_READ_MARKER_GUTTER_WIDTH))
+    }
+}
+
 pub(crate) struct TranscriptOverlay {
     /// Pager UI state and the renderables currently displayed.
     ///
@@ -429,6 +481,7 @@ pub(crate) struct TranscriptOverlay {
     /// Committed transcript cells (does not include the live tail).
     cells: Vec<Arc<dyn HistoryCell>>,
     highlight_cell: Option<usize>,
+    read_position: Option<TranscriptReadPosition>,
     /// Cache key for the render-only live tail appended after committed cells.
     live_tail_key: Option<LiveTailKey>,
     is_done: bool,
@@ -450,27 +503,50 @@ struct LiveTailKey {
 }
 
 impl TranscriptOverlay {
+    fn assistant_content_width(width: u16) -> u16 {
+        width.saturating_sub(TRANSCRIPT_READ_MARKER_GUTTER_WIDTH)
+    }
+
+    fn transcript_height_for_cell(cell: &Arc<dyn HistoryCell>, width: u16) -> u16 {
+        if cell.as_any().is::<crate::history_cell::AgentMessageCell>() {
+            cell.desired_transcript_height(Self::assistant_content_width(width))
+        } else {
+            cell.desired_transcript_height(width)
+        }
+    }
+
     /// Creates a transcript overlay for a fixed set of committed cells.
     ///
     /// This overlay does not own the "active cell"; callers may optionally append a live tail via
     /// `sync_live_tail` during draws to reflect in-flight activity.
-    pub(crate) fn new(transcript_cells: Vec<Arc<dyn HistoryCell>>) -> Self {
-        Self {
+    pub(crate) fn new(
+        transcript_cells: Vec<Arc<dyn HistoryCell>>,
+        read_position: Option<TranscriptReadPosition>,
+    ) -> Self {
+        let mut overlay = Self {
             view: PagerView::new(
-                Self::render_cells(&transcript_cells, /*highlight_cell*/ None),
+                Self::render_cells(
+                    &transcript_cells,
+                    /*highlight_cell*/ None,
+                    read_position,
+                ),
                 "T R A N S C R I P T".to_string(),
                 usize::MAX,
             ),
             cells: transcript_cells,
             highlight_cell: None,
+            read_position,
             live_tail_key: None,
             is_done: false,
-        }
+        };
+        overlay.update_title(/*width*/ u16::MAX);
+        overlay
     }
 
     fn render_cells(
         cells: &[Arc<dyn HistoryCell>],
         highlight_cell: Option<usize>,
+        read_position: Option<TranscriptReadPosition>,
     ) -> Vec<Box<dyn Renderable>> {
         cells
             .iter()
@@ -484,6 +560,17 @@ impl TranscriptOverlay {
                             user_message_style().reversed()
                         } else {
                             user_message_style()
+                        },
+                    })) as Box<dyn Renderable>
+                } else if c.as_any().is::<crate::history_cell::AgentMessageCell>() {
+                    Box::new(CachedRenderable::new(AssistantCellRenderable {
+                        cell: c.clone(),
+                        selected_line: if highlight_cell.is_none() {
+                            read_position
+                                .filter(|position| position.cell_index == i)
+                                .map(|position| position.line_index)
+                        } else {
+                            None
                         },
                     })) as Box<dyn Renderable>
                 } else {
@@ -521,7 +608,8 @@ impl TranscriptOverlay {
         let had_prior_cells = !self.cells.is_empty();
         let tail_renderable = self.take_live_tail_renderable();
         self.cells.push(cell);
-        self.view.renderables = Self::render_cells(&self.cells, self.highlight_cell);
+        self.view.renderables =
+            Self::render_cells(&self.cells, self.highlight_cell, self.read_position);
         if let Some(tail) = tail_renderable {
             let tail = if !had_prior_cells
                 && self
@@ -622,6 +710,10 @@ impl TranscriptOverlay {
         }
     }
 
+    pub(crate) fn read_position(&self) -> Option<TranscriptReadPosition> {
+        self.read_position
+    }
+
     /// Returns whether the underlying pager view is currently pinned to the bottom.
     ///
     /// The `App` draw loop uses this to decide whether to schedule animation frames for the live
@@ -632,9 +724,140 @@ impl TranscriptOverlay {
 
     fn rebuild_renderables(&mut self) {
         let tail_renderable = self.take_live_tail_renderable();
-        self.view.renderables = Self::render_cells(&self.cells, self.highlight_cell);
+        self.view.renderables =
+            Self::render_cells(&self.cells, self.highlight_cell, self.read_position);
         if let Some(tail) = tail_renderable {
             self.view.renderables.push(tail);
+        }
+    }
+
+    fn assistant_positions(&self, width: u16) -> Vec<TranscriptReadPosition> {
+        self.cells
+            .iter()
+            .enumerate()
+            .filter(|(_, cell)| cell.as_any().is::<crate::history_cell::AgentMessageCell>())
+            .flat_map(|(cell_index, cell)| {
+                cell.transcript_lines(Self::assistant_content_width(width))
+                    .into_iter()
+                    .enumerate()
+                    .map(move |(line_index, _)| TranscriptReadPosition {
+                        cell_index,
+                        line_index,
+                    })
+            })
+            .collect()
+    }
+
+    fn ensure_read_position_initialized(&mut self, width: u16) {
+        if self.highlight_cell.is_some() {
+            self.update_title(width);
+            return;
+        }
+
+        let assistant_positions = self.assistant_positions(width);
+        let next_position = self
+            .read_position
+            .filter(|position| assistant_positions.contains(position))
+            .or_else(|| assistant_positions.last().copied());
+        if self.read_position != next_position {
+            self.read_position = next_position;
+            self.rebuild_renderables();
+        }
+        self.update_title(width);
+    }
+
+    fn move_read_position(&mut self, width: u16, delta: isize, tui: &mut tui::Tui) {
+        if self.highlight_cell.is_some() {
+            return;
+        }
+
+        let assistant_positions = self.assistant_positions(width);
+        if assistant_positions.is_empty() {
+            return;
+        }
+
+        let current_idx = self
+            .read_position
+            .and_then(|position| {
+                assistant_positions
+                    .iter()
+                    .position(|candidate| candidate == &position)
+            })
+            .unwrap_or_else(|| assistant_positions.len().saturating_sub(1));
+        let next_idx = if delta.is_negative() {
+            current_idx.saturating_sub(delta.unsigned_abs())
+        } else {
+            current_idx
+                .saturating_add(delta as usize)
+                .min(assistant_positions.len().saturating_sub(1))
+        };
+        let next_position = assistant_positions[next_idx];
+        if self.read_position != Some(next_position) {
+            self.read_position = Some(next_position);
+            self.rebuild_renderables();
+        }
+
+        self.update_title(width);
+        self.scroll_read_position_into_view(width);
+        tui.frame_requester()
+            .schedule_frame_in(crate::tui::TARGET_FRAME_INTERVAL);
+    }
+
+    fn scroll_read_position_into_view(&mut self, width: u16) {
+        let Some(position) = self.read_position else {
+            return;
+        };
+        let viewport_height = self
+            .view
+            .last_content_height
+            .unwrap_or_else(|| self.view.content_area(Rect::new(0, 0, width, 10)).height as usize);
+        let line_row = self.absolute_row_for_read_position(width, position);
+        let current_top = self.view.scroll_offset;
+        let current_bottom = current_top.saturating_add(viewport_height.saturating_sub(1));
+        if line_row < current_top {
+            self.view.scroll_offset = line_row;
+        } else if line_row > current_bottom {
+            self.view.scroll_offset = line_row.saturating_sub(viewport_height.saturating_sub(1));
+        }
+    }
+
+    fn absolute_row_for_read_position(
+        &self,
+        width: u16,
+        position: TranscriptReadPosition,
+    ) -> usize {
+        let mut row = 0usize;
+        for (cell_index, cell) in self.cells.iter().enumerate() {
+            if cell_index > 0 && !cell.is_stream_continuation() {
+                row += 1;
+            }
+            if cell_index == position.cell_index {
+                return row + position.line_index;
+            }
+            row += usize::from(Self::transcript_height_for_cell(cell, width));
+        }
+        row
+    }
+
+    fn update_title(&mut self, width: u16) {
+        if self.highlight_cell.is_some() {
+            self.view.title = "T R A N S C R I P T".to_string();
+            return;
+        }
+
+        let assistant_positions = self.assistant_positions(width);
+        if let Some(position) = self.read_position
+            && let Some(current_idx) = assistant_positions
+                .iter()
+                .position(|candidate| candidate == &position)
+        {
+            self.view.title = format!(
+                "T R A N S C R I P T  {}/{}",
+                current_idx + 1,
+                assistant_positions.len()
+            );
+        } else {
+            self.view.title = "T R A N S C R I P T".to_string();
         }
     }
 
@@ -675,6 +898,9 @@ impl TranscriptOverlay {
             pairs.push((&[KEY_ESC, KEY_LEFT], "to edit prev"));
             pairs.push((&[KEY_RIGHT], "to edit next"));
             pairs.push((&[KEY_ENTER], "to edit message"));
+        } else if self.read_position.is_some() {
+            pairs.push((&[KEY_UP, KEY_DOWN], "to move read line"));
+            pairs.push((&[], "selected line is read/branch point"));
         } else {
             pairs.push((&[KEY_ESC], "to edit prev"));
         }
@@ -684,6 +910,7 @@ impl TranscriptOverlay {
     pub(crate) fn render(&mut self, area: Rect, buf: &mut Buffer) {
         let top_h = area.height.saturating_sub(3);
         let top = Rect::new(area.x, area.y, area.width, top_h);
+        self.ensure_read_position_initialized(top.width);
         let bottom = Rect::new(area.x, area.y + top_h, area.width, 3);
         self.view.render(top, buf);
         self.render_hints(bottom, buf);
@@ -697,6 +924,26 @@ impl TranscriptOverlay {
                 e if KEY_Q.is_press(e) || KEY_CTRL_C.is_press(e) || KEY_CTRL_T.is_press(e) => {
                     self.is_done = true;
                     Ok(())
+                }
+                e if KEY_UP.is_press(e) || KEY_K.is_press(e) => {
+                    let width = self.view.content_area(tui.terminal.viewport_area).width;
+                    self.ensure_read_position_initialized(width);
+                    if self.highlight_cell.is_none() && self.read_position.is_some() {
+                        self.move_read_position(width, -1, tui);
+                        Ok(())
+                    } else {
+                        self.view.handle_key_event(tui, e)
+                    }
+                }
+                e if KEY_DOWN.is_press(e) || KEY_J.is_press(e) => {
+                    let width = self.view.content_area(tui.terminal.viewport_area).width;
+                    self.ensure_read_position_initialized(width);
+                    if self.highlight_cell.is_none() && self.read_position.is_some() {
+                        self.move_read_position(width, 1, tui);
+                        Ok(())
+                    } else {
+                        self.view.handle_key_event(tui, e)
+                    }
                 }
                 other => self.view.handle_key_event(tui, other),
             },
@@ -853,9 +1100,12 @@ mod tests {
 
     #[test]
     fn edit_prev_hint_is_visible() {
-        let mut overlay = TranscriptOverlay::new(vec![Arc::new(TestCell {
-            lines: vec![Line::from("hello")],
-        })]);
+        let mut overlay = TranscriptOverlay::new(
+            vec![Arc::new(TestCell {
+                lines: vec![Line::from("hello")],
+            })],
+            None,
+        );
 
         // Render into a wide buffer so the footer hints aren't truncated.
         let area = Rect::new(0, 0, 120, 10);
@@ -871,9 +1121,12 @@ mod tests {
 
     #[test]
     fn edit_next_hint_is_visible_when_highlighted() {
-        let mut overlay = TranscriptOverlay::new(vec![Arc::new(TestCell {
-            lines: vec![Line::from("hello")],
-        })]);
+        let mut overlay = TranscriptOverlay::new(
+            vec![Arc::new(TestCell {
+                lines: vec![Line::from("hello")],
+            })],
+            None,
+        );
         overlay.set_highlight_cell(Some(0));
 
         // Render into a wide buffer so the footer hints aren't truncated.
@@ -891,17 +1144,20 @@ mod tests {
     #[test]
     fn transcript_overlay_snapshot_basic() {
         // Prepare a transcript overlay with a few lines
-        let mut overlay = TranscriptOverlay::new(vec![
-            Arc::new(TestCell {
-                lines: vec![Line::from("alpha")],
-            }),
-            Arc::new(TestCell {
-                lines: vec![Line::from("beta")],
-            }),
-            Arc::new(TestCell {
-                lines: vec![Line::from("gamma")],
-            }),
-        ]);
+        let mut overlay = TranscriptOverlay::new(
+            vec![
+                Arc::new(TestCell {
+                    lines: vec![Line::from("alpha")],
+                }),
+                Arc::new(TestCell {
+                    lines: vec![Line::from("beta")],
+                }),
+                Arc::new(TestCell {
+                    lines: vec![Line::from("gamma")],
+                }),
+            ],
+            None,
+        );
         let mut term = Terminal::new(TestBackend::new(40, 10)).expect("term");
         term.draw(|f| overlay.render(f.area(), f.buffer_mut()))
             .expect("draw");
@@ -909,10 +1165,96 @@ mod tests {
     }
 
     #[test]
+    fn transcript_overlay_initializes_read_position_from_latest_assistant_line() {
+        let mut overlay = TranscriptOverlay::new(
+            vec![Arc::new(history_cell::AgentMessageCell::new(
+                vec!["first".into(), "second".into()],
+                /*is_first_line*/ true,
+            ))],
+            None,
+        );
+
+        let area = Rect::new(0, 0, 60, 10);
+        let mut buf = Buffer::empty(area);
+        overlay.render(area, &mut buf);
+
+        assert_eq!(
+            overlay.read_position(),
+            Some(TranscriptReadPosition {
+                cell_index: 0,
+                line_index: 1,
+            })
+        );
+
+        let rendered = buffer_to_text(&buf, area);
+        assert!(
+            rendered.contains("T R A N S C R I P T  2/2"),
+            "expected transcript title to show selected assistant line, got: {rendered:?}"
+        );
+        assert!(
+            rendered.contains("move read line"),
+            "expected read-line footer hint, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn transcript_overlay_restores_saved_read_position() {
+        let mut overlay = TranscriptOverlay::new(
+            vec![Arc::new(history_cell::AgentMessageCell::new(
+                vec!["first".into(), "second".into()],
+                /*is_first_line*/ true,
+            ))],
+            Some(TranscriptReadPosition {
+                cell_index: 0,
+                line_index: 0,
+            }),
+        );
+
+        let area = Rect::new(0, 0, 60, 10);
+        let mut buf = Buffer::empty(area);
+        overlay.render(area, &mut buf);
+
+        assert_eq!(
+            overlay.read_position(),
+            Some(TranscriptReadPosition {
+                cell_index: 0,
+                line_index: 0,
+            })
+        );
+        let rendered = buffer_to_text(&buf, area);
+        assert!(
+            rendered.contains("T R A N S C R I P T  1/2"),
+            "expected transcript title to restore saved read line, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn transcript_overlay_snapshot_shows_read_marker_for_assistant_line() {
+        let mut overlay = TranscriptOverlay::new(
+            vec![Arc::new(history_cell::AgentMessageCell::new(
+                vec!["alpha".into(), "beta".into()],
+                /*is_first_line*/ true,
+            ))],
+            Some(TranscriptReadPosition {
+                cell_index: 0,
+                line_index: 0,
+            }),
+        );
+
+        let mut term = Terminal::new(TestBackend::new(60, 10)).expect("term");
+        term.draw(|f| overlay.render(f.area(), f.buffer_mut()))
+            .expect("draw");
+        assert_snapshot!(term.backend());
+    }
+
+    #[test]
     fn transcript_overlay_renders_live_tail() {
-        let mut overlay = TranscriptOverlay::new(vec![Arc::new(TestCell {
-            lines: vec![Line::from("alpha")],
-        })]);
+        let mut overlay = TranscriptOverlay::new(
+            vec![Arc::new(TestCell {
+                lines: vec![Line::from("alpha")],
+            })],
+            None,
+        );
         overlay.sync_live_tail(
             /*width*/ 40,
             Some(ActiveCellTranscriptKey {
@@ -931,9 +1273,12 @@ mod tests {
 
     #[test]
     fn transcript_overlay_sync_live_tail_is_noop_for_identical_key() {
-        let mut overlay = TranscriptOverlay::new(vec![Arc::new(TestCell {
-            lines: vec![Line::from("alpha")],
-        })]);
+        let mut overlay = TranscriptOverlay::new(
+            vec![Arc::new(TestCell {
+                lines: vec![Line::from("alpha")],
+            })],
+            None,
+        );
 
         let calls = std::cell::Cell::new(0usize);
         let key = ActiveCellTranscriptKey {
@@ -1027,7 +1372,7 @@ mod tests {
         let exec_cell: Arc<dyn HistoryCell> = Arc::new(exec_cell);
         cells.push(exec_cell);
 
-        let mut overlay = TranscriptOverlay::new(cells);
+        let mut overlay = TranscriptOverlay::new(cells, None);
         let area = Rect::new(0, 0, 80, 12);
         let mut buf = Buffer::empty(area);
 
@@ -1049,6 +1394,7 @@ mod tests {
                     }) as Arc<dyn HistoryCell>
                 })
                 .collect(),
+            None,
         );
         let mut term = Terminal::new(TestBackend::new(40, 12)).expect("term");
         term.draw(|f| overlay.render(f.area(), f.buffer_mut()))
@@ -1076,6 +1422,7 @@ mod tests {
                     }) as Arc<dyn HistoryCell>
                 })
                 .collect(),
+            None,
         );
         let mut term = Terminal::new(TestBackend::new(40, 12)).expect("term");
         term.draw(|f| overlay.render(f.area(), f.buffer_mut()))
@@ -1139,6 +1486,7 @@ mod tests {
                     }) as Arc<dyn HistoryCell>
                 })
                 .collect(),
+            None,
         );
         let area = Rect::new(0, 0, 40, 15);
 

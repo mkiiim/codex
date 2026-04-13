@@ -56,6 +56,7 @@ use crate::multi_agents::format_agent_picker_item_name;
 use crate::multi_agents::next_agent_shortcut_matches;
 use crate::multi_agents::previous_agent_shortcut_matches;
 use crate::pager_overlay::Overlay;
+use crate::pager_overlay::TranscriptReadPosition;
 use crate::read_session_model;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::Renderable;
@@ -1041,6 +1042,7 @@ pub(crate) struct App {
 
     // Pager overlay state (Transcript or Static like Diff)
     pub(crate) overlay: Option<Overlay>,
+    pub(crate) transcript_read_position: Option<TranscriptReadPosition>,
     pub(crate) deferred_history_lines: Vec<Line<'static>>,
     has_emitted_history_lines: bool,
 
@@ -1727,6 +1729,7 @@ impl App {
 
     fn reset_app_ui_state_after_clear(&mut self) {
         self.overlay = None;
+        self.transcript_read_position = None;
         self.transcript_cells.clear();
         self.deferred_history_lines.clear();
         self.has_emitted_history_lines = false;
@@ -3676,6 +3679,7 @@ impl App {
 
     fn reset_for_thread_switch(&mut self, tui: &mut tui::Tui) -> Result<()> {
         self.overlay = None;
+        self.transcript_read_position = None;
         self.transcript_cells.clear();
         self.deferred_history_lines.clear();
         tui.clear_pending_history_lines();
@@ -4292,6 +4296,7 @@ impl App {
             enhanced_keys_supported,
             transcript_cells: Vec::new(),
             overlay: None,
+            transcript_read_position: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
@@ -6647,7 +6652,10 @@ impl App {
             } => {
                 // Enter alternate screen and set viewport to full size.
                 let _ = tui.enter_alt_screen();
-                self.overlay = Some(Overlay::new_transcript(self.transcript_cells.clone()));
+                self.overlay = Some(Overlay::new_transcript(
+                    self.transcript_cells.clone(),
+                    self.transcript_read_position,
+                ));
                 tui.frame_requester().schedule_frame();
             }
             KeyEvent {
@@ -10875,6 +10883,7 @@ guardian_approval = true
             file_search,
             transcript_cells: Vec::new(),
             overlay: None,
+            transcript_read_position: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
             enhanced_keys_supported: false,
@@ -10932,6 +10941,7 @@ guardian_approval = true
                 file_search,
                 transcript_cells: Vec::new(),
                 overlay: None,
+                transcript_read_position: None,
                 deferred_history_lines: Vec::new(),
                 has_emitted_history_lines: false,
                 enhanced_keys_supported: false,
@@ -12487,7 +12497,10 @@ guardian_approval = true
                 /*is_first_line*/ false,
             )) as Arc<dyn HistoryCell>,
         ];
-        app.overlay = Some(Overlay::new_transcript(app.transcript_cells.clone()));
+        app.overlay = Some(Overlay::new_transcript(
+            app.transcript_cells.clone(),
+            app.transcript_read_position,
+        ));
         app.deferred_history_lines = vec![Line::from("stale buffered line")];
         app.backtrack.overlay_preview_active = true;
         app.backtrack.nth_user_message = 1;
@@ -12715,7 +12728,10 @@ guardian_approval = true
             local_image_paths: Vec::new(),
             remote_image_urls: Vec::new(),
         }) as Arc<dyn HistoryCell>];
-        app.overlay = Some(Overlay::new_transcript(app.transcript_cells.clone()));
+        app.overlay = Some(Overlay::new_transcript(
+            app.transcript_cells.clone(),
+            app.transcript_read_position,
+        ));
         app.deferred_history_lines = vec![Line::from("stale buffered line")];
         app.has_emitted_history_lines = true;
         app.backtrack.primed = true;

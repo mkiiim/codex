@@ -1,0 +1,15 @@
+---
+source: tui/src/pager_overlay.rs
+assertion_line: 1247
+expression: term.backend()
+---
+"/ T R A N S C R I P T  1/2/ / / / / / / / / / / / / / / / / "
+"> • alpha                                                   "
+"    beta                                                    "
+"~                                                           "
+"~                                                           "
+"~                                                           "
+"───────────────────────────────────────────────────── 100% ─"
+" ↑/↓ to scroll   pgup/pgdn to page   home/end to jump       "
+" q to quit   ↑/↓ to move read line    selected line is read/"
+"                                                            "

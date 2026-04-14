@@ -399,6 +399,15 @@ impl App {
 
         if let Some(overlay) = &mut self.overlay {
             overlay.handle_event(tui, event)?;
+            let reply_target = match overlay {
+                Overlay::Transcript(transcript) => transcript.take_reply_target(),
+                Overlay::Static(_) => None,
+            };
+            if let Some(reply_target) = reply_target {
+                self.close_transcript_overlay(tui);
+                self.activate_pending_transcript_reply(tui, reply_target);
+                return Ok(());
+            }
             if overlay.is_done() {
                 self.close_transcript_overlay(tui);
                 tui.frame_requester().schedule_frame();

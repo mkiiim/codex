@@ -57,6 +57,7 @@ use crate::multi_agents::next_agent_shortcut_matches;
 use crate::multi_agents::previous_agent_shortcut_matches;
 use crate::pager_overlay::Overlay;
 use crate::pager_overlay::TranscriptReadPosition;
+use crate::pager_overlay::TranscriptReplyTarget;
 use crate::read_session_model;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::Renderable;
@@ -1043,6 +1044,7 @@ pub(crate) struct App {
     // Pager overlay state (Transcript or Static like Diff)
     pub(crate) overlay: Option<Overlay>,
     pub(crate) transcript_read_position: Option<TranscriptReadPosition>,
+    pub(crate) pending_transcript_reply: Option<PendingTranscriptReply>,
     pub(crate) deferred_history_lines: Vec<Line<'static>>,
     has_emitted_history_lines: bool,
 
@@ -1097,6 +1099,13 @@ pub(crate) struct App {
     // overwrite a newer toggle, even if the plugin is toggled from different
     // cwd contexts.
     pending_plugin_enabled_writes: HashMap<String, Option<bool>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PendingTranscriptReply {
+    pub(crate) read_position: TranscriptReadPosition,
+    pub(crate) current_index: usize,
+    pub(crate) total: usize,
 }
 
 #[derive(Default)]
@@ -1730,6 +1739,7 @@ impl App {
     fn reset_app_ui_state_after_clear(&mut self) {
         self.overlay = None;
         self.transcript_read_position = None;
+        self.pending_transcript_reply = None;
         self.transcript_cells.clear();
         self.deferred_history_lines.clear();
         self.has_emitted_history_lines = false;
@@ -3680,6 +3690,7 @@ impl App {
     fn reset_for_thread_switch(&mut self, tui: &mut tui::Tui) -> Result<()> {
         self.overlay = None;
         self.transcript_read_position = None;
+        self.pending_transcript_reply = None;
         self.transcript_cells.clear();
         self.deferred_history_lines.clear();
         tui.clear_pending_history_lines();
@@ -4297,6 +4308,7 @@ impl App {
             transcript_cells: Vec::new(),
             overlay: None,
             transcript_read_position: None,
+            pending_transcript_reply: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
@@ -6583,6 +6595,36 @@ impl App {
         tui.frame_requester().schedule_frame();
     }
 
+    pub(crate) fn activate_pending_transcript_reply(
+        &mut self,
+        tui: &mut tui::Tui,
+        reply_target: TranscriptReplyTarget,
+    ) {
+        self.set_pending_transcript_reply(reply_target);
+        tui.frame_requester().schedule_frame();
+    }
+
+    fn set_pending_transcript_reply(&mut self, reply_target: TranscriptReplyTarget) {
+        let pending_reply = PendingTranscriptReply {
+            read_position: reply_target.read_position,
+            current_index: reply_target.current_index,
+            total: reply_target.total,
+        };
+        self.pending_transcript_reply = Some(pending_reply);
+        self.chat_widget.set_footer_hint_override(Some(vec![(
+            "transcript".to_string(),
+            format!(
+                "replying from {}/{}",
+                pending_reply.current_index, pending_reply.total
+            ),
+        )]));
+    }
+
+    fn clear_pending_transcript_reply(&mut self) {
+        self.pending_transcript_reply = None;
+        self.chat_widget.set_footer_hint_override(/*items*/ None);
+    }
+
     fn reset_external_editor_state(&mut self, tui: &mut tui::Tui) {
         self.chat_widget
             .set_external_editor_state(ExternalEditorState::Closed);
@@ -6701,7 +6743,13 @@ impl App {
                 kind: KeyEventKind::Press | KeyEventKind::Repeat,
                 ..
             } => {
-                if self.chat_widget.is_normal_backtrack_mode()
+                if self.overlay.is_none()
+                    && self.pending_transcript_reply.is_some()
+                    && self.chat_widget.composer_is_empty()
+                {
+                    self.clear_pending_transcript_reply();
+                    tui.frame_requester().schedule_frame();
+                } else if self.chat_widget.is_normal_backtrack_mode()
                     && self.chat_widget.composer_is_empty()
                 {
                     self.handle_backtrack_esc_key(tui);
@@ -6723,6 +6771,17 @@ impl App {
                 }
             }
             KeyEvent {
+                code: KeyCode::Enter,
+                kind: KeyEventKind::Press,
+                ..
+            } if self.pending_transcript_reply.is_some()
+                && !self.chat_widget.composer_is_empty()
+                && self.overlay.is_none() =>
+            {
+                self.clear_pending_transcript_reply();
+                self.chat_widget.handle_key_event(key_event);
+            }
+            KeyEvent {
                 kind: KeyEventKind::Press | KeyEventKind::Repeat,
                 ..
             } => {
@@ -6742,6 +6801,11 @@ impl App {
 
     fn refresh_status_line(&mut self) {
         self.chat_widget.refresh_status_line();
+    }
+
+    #[cfg(test)]
+    fn pending_transcript_reply(&self) -> Option<PendingTranscriptReply> {
+        self.pending_transcript_reply
     }
 
     #[cfg(target_os = "windows")]
@@ -10884,6 +10948,7 @@ guardian_approval = true
             transcript_cells: Vec::new(),
             overlay: None,
             transcript_read_position: None,
+            pending_transcript_reply: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
             enhanced_keys_supported: false,
@@ -10942,6 +11007,7 @@ guardian_approval = true
                 transcript_cells: Vec::new(),
                 overlay: None,
                 transcript_read_position: None,
+                pending_transcript_reply: None,
                 deferred_history_lines: Vec::new(),
                 has_emitted_history_lines: false,
                 enhanced_keys_supported: false,
@@ -12526,6 +12592,32 @@ guardian_approval = true
             _ => panic!("expected transcript overlay"),
         };
         assert_eq!(overlay_cell_count, app.transcript_cells.len());
+    }
+
+    #[tokio::test]
+    async fn transcript_reply_target_sets_pending_reply_state() {
+        let mut app = make_test_app().await;
+        app.set_pending_transcript_reply(TranscriptReplyTarget {
+            read_position: TranscriptReadPosition {
+                cell_index: 0,
+                source_line_index: 0,
+                source_byte_offset: 4,
+            },
+            current_index: 1,
+            total: 2,
+        });
+        assert_eq!(
+            app.pending_transcript_reply(),
+            Some(PendingTranscriptReply {
+                read_position: TranscriptReadPosition {
+                    cell_index: 0,
+                    source_line_index: 0,
+                    source_byte_offset: 4,
+                },
+                current_index: 1,
+                total: 2,
+            })
+        );
     }
 
     #[tokio::test]

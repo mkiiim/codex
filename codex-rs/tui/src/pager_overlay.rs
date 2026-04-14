@@ -55,6 +55,13 @@ pub(crate) struct TranscriptReadPosition {
     pub(crate) source_byte_offset: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TranscriptReplyTarget {
+    pub(crate) read_position: TranscriptReadPosition,
+    pub(crate) current_index: usize,
+    pub(crate) total: usize,
+}
+
 pub(crate) enum Overlay {
     Transcript(TranscriptOverlay),
     Static(StaticOverlay),
@@ -522,6 +529,7 @@ pub(crate) struct TranscriptOverlay {
     cells: Vec<Arc<dyn HistoryCell>>,
     highlight_cell: Option<usize>,
     read_position: Option<TranscriptReadPosition>,
+    pending_reply_target: Option<TranscriptReplyTarget>,
     /// Cache key for the render-only live tail appended after committed cells.
     live_tail_key: Option<LiveTailKey>,
     is_done: bool,
@@ -576,6 +584,7 @@ impl TranscriptOverlay {
             cells: transcript_cells,
             highlight_cell: None,
             read_position,
+            pending_reply_target: None,
             live_tail_key: None,
             is_done: false,
         };
@@ -750,6 +759,21 @@ impl TranscriptOverlay {
 
     pub(crate) fn read_position(&self) -> Option<TranscriptReadPosition> {
         self.read_position
+    }
+
+    pub(crate) fn take_reply_target(&mut self) -> Option<TranscriptReplyTarget> {
+        self.pending_reply_target.take()
+    }
+
+    fn reply_target_for_current_read_position(&self, width: u16) -> Option<TranscriptReplyTarget> {
+        let read_position = self.read_position?;
+        let assistant_positions = self.assistant_positions(width);
+        let current_index = self.current_assistant_position_index(width, &assistant_positions)?;
+        Some(TranscriptReplyTarget {
+            read_position,
+            current_index: current_index + 1,
+            total: assistant_positions.len(),
+        })
     }
 
     /// Returns whether the underlying pager view is currently pinned to the bottom.
@@ -1003,6 +1027,7 @@ impl TranscriptOverlay {
             pairs.push((&[KEY_ENTER], "to edit message"));
         } else if self.read_position.is_some() {
             pairs.push((&[KEY_UP, KEY_DOWN], "to move read line"));
+            pairs.push((&[KEY_ENTER], "to reply from line"));
             pairs.push((&[], "selected line is read/branch point"));
         } else {
             pairs.push((&[KEY_ESC], "to edit prev"));
@@ -1047,6 +1072,19 @@ impl TranscriptOverlay {
                     } else {
                         self.view.handle_key_event(tui, e)
                     }
+                }
+                e if KEY_ENTER.is_press(e) => {
+                    let width = self.view.content_area(tui.terminal.viewport_area).width;
+                    self.ensure_read_position_initialized(width);
+                    if self.highlight_cell.is_none()
+                        && let Some(reply_target) =
+                            self.reply_target_for_current_read_position(width)
+                    {
+                        self.pending_reply_target = Some(reply_target);
+                        self.is_done = true;
+                        return Ok(());
+                    }
+                    self.view.handle_key_event(tui, e)
                 }
                 other => self.view.handle_key_event(tui, other),
             },
@@ -1412,6 +1450,33 @@ mod tests {
         assert!(
             rendered.contains("T R A N S C R I P T  1/1"),
             "expected resized overlay to preserve the saved anchor while mapping it into the merged wrapped line, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn transcript_overlay_reply_target_uses_current_read_point() {
+        let overlay = TranscriptOverlay::new(
+            vec![Arc::new(history_cell::AgentMessageCell::new(
+                vec!["alpha".into(), "beta".into()],
+                /*is_first_line*/ true,
+            ))],
+            Some(TranscriptReadPosition {
+                cell_index: 0,
+                source_line_index: 0,
+                source_byte_offset: 4,
+            }),
+        );
+        assert_eq!(
+            overlay.reply_target_for_current_read_position(/*width*/ 60),
+            Some(TranscriptReplyTarget {
+                read_position: TranscriptReadPosition {
+                    cell_index: 0,
+                    source_line_index: 0,
+                    source_byte_offset: 4,
+                },
+                current_index: 1,
+                total: 2,
+            })
         );
     }
 

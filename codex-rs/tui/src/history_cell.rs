@@ -577,19 +577,20 @@ impl AgentMessageCell {
                     && range.start <= source_byte_offset
                     && source_byte_offset < range.end
             })
-            .map(|(rendered_line_index, (_, maybe_range))| {
-                let range = maybe_range.as_ref().expect("checked above");
-                (
-                    rendered_line_index,
-                    self.transcript_caret_column(
-                        width,
-                        source_line_index,
-                        source_byte_offset,
-                        &wrapped_rows,
+            .and_then(|(rendered_line_index, (_, maybe_range))| {
+                maybe_range.as_ref().map(|range| {
+                    (
                         rendered_line_index,
-                        range,
-                    ),
-                )
+                        self.transcript_caret_column(
+                            width,
+                            source_line_index,
+                            source_byte_offset,
+                            &wrapped_rows,
+                            rendered_line_index,
+                            range,
+                        ),
+                    )
+                })
             })
             .or_else(|| {
                 wrapped_rows
@@ -600,18 +601,19 @@ impl AgentMessageCell {
                     })
                     .next_back()
                     .and_then(|(rendered_line_index, (_, maybe_range))| {
-                        let range = maybe_range.as_ref().expect("filtered above");
-                        (source_byte_offset >= range.end).then_some((
-                            rendered_line_index,
-                            self.transcript_caret_column(
-                                width,
-                                source_line_index,
-                                source_byte_offset,
-                                &wrapped_rows,
+                        maybe_range.as_ref().and_then(|range| {
+                            (source_byte_offset >= range.end).then_some((
                                 rendered_line_index,
-                                range,
-                            ),
-                        ))
+                                self.transcript_caret_column(
+                                    width,
+                                    source_line_index,
+                                    source_byte_offset,
+                                    &wrapped_rows,
+                                    rendered_line_index,
+                                    range,
+                                ),
+                            ))
+                        })
                     })
             })
     }

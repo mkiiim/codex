@@ -36,6 +36,19 @@ This creates ambiguity in both the UX and the model context:
 - Make branch depth visible so the user can tell how far they are from the
   original conversation.
 
+## Core principles
+
+- A conversation branch is a real divergence in conversation state, not only a
+  UI bookmark.
+- A branch created from the middle of an assistant reply is semantically
+  equivalent to a user interruption from that read point.
+- The system should not assume the user read or accepted assistant content past
+  the selected branch anchor.
+- Branch context should follow the active ancestry path only, not sibling or
+  descendant branches.
+- Branch outcomes are isolated by default; carrying decisions back to a parent
+  branch should be an explicit future action, not an implicit side effect.
+
 ## Non-goals
 
 - Full document-style annotation, rich text selection, or arbitrary span-based
@@ -92,6 +105,8 @@ Branch semantics:
   for branch-context purposes.
 - The remainder of that assistant message is treated as unread and is not
   included in the branch context.
+- The branch should record that the assistant reply was interrupted from the
+  user's point of view, rather than merely appearing to end abruptly.
 
 ### 4. Default end-of-thread behavior
 
@@ -148,6 +163,54 @@ When constructing the next model input for a branch:
 - exclude the unread remainder of that assistant message
 - exclude any future turns that only exist past the branch point in the parent
   thread
+- include explicit machine-readable branch/interruption metadata so the model
+  understands that the assistant reply was interrupted at the selected point
+
+### Branch tree semantics
+
+Each reply belongs to exactly one path through the conversation tree.
+
+Recommended rule set:
+
+- a turn should see the full ancestry of its active path
+- a turn should not automatically see sibling branch turns
+- a turn should not automatically see descendant branch turns
+- parent/main-thread replies should not inherit child-branch discussion unless
+  the user explicitly carries it back
+
+Examples:
+
+- replying at the end of the main path includes only main-path turns
+- replying inside branch `A` includes the main path through the `A` split plus
+  branch `A` turns
+- replying inside branch `A1` includes the main path through `A`, then branch
+  `A` through the `A1` split, then branch `A1` turns
+
+Not included by default:
+
+- sibling branches such as `B` while replying in `A`
+- child branches while replying on a parent branch
+- unread tail content after a branch anchor
+
+### Branch merge semantics
+
+Important branch conclusions may later need to influence the parent or main
+thread. The recommended model is:
+
+- branching is for divergence
+- merging back is a separate explicit action
+
+For v1:
+
+- branch outcomes are isolated by default
+- there is no implicit propagation of branch conclusions upward
+- if a user wants a branch conclusion to affect a parent path, they must carry
+  it back manually
+
+Future direction:
+
+- support an explicit "merge" or "promote decision to parent" action for
+  carrying branch outcomes back into an ancestor path
 
 ### Parent-thread continuity
 
@@ -228,6 +291,8 @@ Important constraint:
   of the conversation.
 - The system may communicate the structural reason: the user branched from a
   partial read position and unread content was excluded.
+- The system may also communicate that the assistant reply was effectively
+  interrupted from the user's point of view.
 
 ### 6. Branching scope in v1
 
@@ -631,8 +696,10 @@ When a user submits into the branch:
 
 - the app-server should already consider the thread's copied history truncated
   at the branch point
-- additional branch metadata should be added so the model explicitly knows the
-  user branched from a partial read position
+- additional branch metadata should be added so the model explicitly knows:
+  - the user branched from a partial read position
+  - the assistant reply was interrupted from the user's point of view
+  - content after that point was unread and excluded
 
 This avoids relying on transcript shape alone to imply the semantics.
 

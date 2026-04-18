@@ -33,6 +33,7 @@ use crate::external_agent_config_migration_startup::handle_external_agent_config
 use crate::external_editor;
 use crate::file_search::FileSearchManager;
 use crate::history_cell;
+use crate::history_cell::AgentMessageCell;
 use crate::history_cell::HistoryCell;
 #[cfg(not(debug_assertions))]
 use crate::history_cell::UpdateAvailableHistoryCell;
@@ -1104,6 +1105,7 @@ pub(crate) struct App {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PendingTranscriptReply {
     pub(crate) read_position: TranscriptReadPosition,
+    pub(crate) assistant_message_index: usize,
     pub(crate) current_index: usize,
     pub(crate) total: usize,
 }
@@ -4906,11 +4908,33 @@ impl App {
                 return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
             }
             AppEvent::CodexOp(op) => {
-                self.submit_active_thread_op(app_server, op.into()).await?;
+                let op = AppCommand::from(op);
+                if matches!(op.view(), AppCommandView::UserTurn { .. }) {
+                    if let Some(thread_id) = self.chat_widget.thread_id() {
+                        let target_thread_id = self
+                            .maybe_fork_pending_transcript_reply(tui, app_server, thread_id)
+                            .await?;
+                        self.submit_thread_op(app_server, target_thread_id, op)
+                            .await?;
+                    } else {
+                        self.chat_widget
+                            .add_error_message("No active thread is available.".to_string());
+                    }
+                } else {
+                    self.submit_active_thread_op(app_server, op).await?;
+                }
             }
             AppEvent::SubmitThreadOp { thread_id, op } => {
-                self.submit_thread_op(app_server, thread_id, op.into())
-                    .await?;
+                let op = AppCommand::from(op);
+                let thread_id = if matches!(op.view(), AppCommandView::UserTurn { .. })
+                    && self.active_thread_id == Some(thread_id)
+                {
+                    self.maybe_fork_pending_transcript_reply(tui, app_server, thread_id)
+                        .await?
+                } else {
+                    thread_id
+                };
+                self.submit_thread_op(app_server, thread_id, op).await?;
             }
             AppEvent::ThreadHistoryEntryResponse { thread_id, event } => {
                 self.enqueue_thread_history_entry_response(thread_id, event)
@@ -6607,6 +6631,8 @@ impl App {
     fn set_pending_transcript_reply(&mut self, reply_target: TranscriptReplyTarget) {
         let pending_reply = PendingTranscriptReply {
             read_position: reply_target.read_position,
+            assistant_message_index: self
+                .assistant_message_index_for_transcript_cell(reply_target.read_position.cell_index),
             current_index: reply_target.current_index,
             total: reply_target.total,
         };
@@ -6623,6 +6649,48 @@ impl App {
     fn clear_pending_transcript_reply(&mut self) {
         self.pending_transcript_reply = None;
         self.chat_widget.set_footer_hint_override(/*items*/ None);
+    }
+
+    fn assistant_message_index_for_transcript_cell(&self, cell_index: usize) -> usize {
+        self.transcript_cells
+            .iter()
+            .take(cell_index.saturating_add(1))
+            .filter(|cell| cell.as_any().is::<AgentMessageCell>())
+            .count()
+            .saturating_sub(1)
+    }
+
+    async fn maybe_fork_pending_transcript_reply(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
+        thread_id: ThreadId,
+    ) -> Result<ThreadId> {
+        let Some(pending_reply) = self.pending_transcript_reply else {
+            return Ok(thread_id);
+        };
+
+        let started = app_server
+            .fork_thread_with_snapshot(
+                self.config.clone(),
+                thread_id,
+                codex_app_server_protocol::ThreadForkSnapshot::AssistantReadAnchor {
+                    assistant_message_index: u32::try_from(pending_reply.assistant_message_index)
+                        .unwrap_or(u32::MAX),
+                    source_line_index: u32::try_from(pending_reply.read_position.source_line_index)
+                        .unwrap_or(u32::MAX),
+                    source_byte_offset: u32::try_from(
+                        pending_reply.read_position.source_byte_offset,
+                    )
+                    .unwrap_or(u32::MAX),
+                },
+            )
+            .await?;
+        self.shutdown_current_thread(app_server).await;
+        self.replace_chat_widget_with_app_server_thread(tui, app_server, started)
+            .await?;
+        self.clear_pending_transcript_reply();
+        Ok(self.chat_widget.thread_id().unwrap_or(thread_id))
     }
 
     fn reset_external_editor_state(&mut self, tui: &mut tui::Tui) {
@@ -6778,7 +6846,6 @@ impl App {
                 && !self.chat_widget.composer_is_empty()
                 && self.overlay.is_none() =>
             {
-                self.clear_pending_transcript_reply();
                 self.chat_widget.handle_key_event(key_event);
             }
             KeyEvent {
@@ -12614,6 +12681,7 @@ guardian_approval = true
                     source_line_index: 0,
                     source_byte_offset: 4,
                 },
+                assistant_message_index: 0,
                 current_index: 1,
                 total: 2,
             })

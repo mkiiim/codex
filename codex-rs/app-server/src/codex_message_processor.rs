@@ -144,6 +144,7 @@ use codex_app_server_protocol::ThreadDecrementElicitationParams;
 use codex_app_server_protocol::ThreadDecrementElicitationResponse;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
+use codex_app_server_protocol::ThreadForkSnapshot as ApiThreadForkSnapshot;
 use codex_app_server_protocol::ThreadIncrementElicitationParams;
 use codex_app_server_protocol::ThreadIncrementElicitationResponse;
 use codex_app_server_protocol::ThreadInjectItemsParams;
@@ -4783,6 +4784,7 @@ impl CodexMessageProcessor {
         let ThreadForkParams {
             thread_id,
             path,
+            snapshot,
             model,
             model_provider,
             service_tier,
@@ -4796,6 +4798,20 @@ impl CodexMessageProcessor {
             ephemeral,
             persist_extended_history,
         } = params;
+
+        let snapshot = match snapshot.unwrap_or(ApiThreadForkSnapshot::Interrupted) {
+            ApiThreadForkSnapshot::Interrupted => ForkSnapshot::Interrupted,
+            ApiThreadForkSnapshot::AssistantReadAnchor {
+                assistant_message_index,
+                source_line_index,
+                source_byte_offset,
+            } => ForkSnapshot::AssistantReadAnchor {
+                assistant_message_index: usize::try_from(assistant_message_index)
+                    .unwrap_or(usize::MAX),
+                source_line_index: usize::try_from(source_line_index).unwrap_or(usize::MAX),
+                source_byte_offset: usize::try_from(source_byte_offset).unwrap_or(usize::MAX),
+            },
+        };
 
         let (rollout_path, source_thread_id) = if let Some(path) = path {
             (path, None)
@@ -4912,7 +4928,7 @@ impl CodexMessageProcessor {
         } = match self
             .thread_manager
             .fork_thread(
-                ForkSnapshot::Interrupted,
+                snapshot,
                 config,
                 rollout_path.clone(),
                 persist_extended_history,

@@ -296,6 +296,7 @@ export type { ThreadCompactStartParams } from "./ThreadCompactStartParams";
 export type { ThreadCompactStartResponse } from "./ThreadCompactStartResponse";
 export type { ThreadForkParams } from "./ThreadForkParams";
 export type { ThreadForkResponse } from "./ThreadForkResponse";
+export type { ThreadForkSnapshot } from "./ThreadForkSnapshot";
 export type { ThreadInjectItemsParams } from "./ThreadInjectItemsParams";
 export type { ThreadInjectItemsResponse } from "./ThreadInjectItemsResponse";
 export type { ThreadItem } from "./ThreadItem";

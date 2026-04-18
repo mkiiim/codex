@@ -31,6 +31,21 @@ fn assistant_msg(text: &str) -> ResponseItem {
     }
 }
 
+fn assistant_msg_lines(lines: &[&str]) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: lines
+            .iter()
+            .map(|line| ContentItem::OutputText {
+                text: (*line).to_string(),
+            })
+            .collect(),
+        end_turn: None,
+        phase: None,
+    }
+}
+
 fn inter_agent_msg(text: &str, trigger_turn: bool) -> ResponseItem {
     let communication = InterAgentCommunication::new(
         AgentPath::root(),
@@ -221,6 +236,96 @@ fn truncates_rollout_to_last_n_fork_turns_applies_thread_rollback_markers() {
     assert_eq!(
         serde_json::to_value(&truncated).unwrap(),
         serde_json::to_value(&rollout).unwrap()
+    );
+}
+
+#[test]
+fn truncates_assistant_message_at_read_anchor_and_adds_branch_note() {
+    let rollout = vec![
+        RolloutItem::ResponseItem(user_msg("u1")),
+        RolloutItem::ResponseItem(assistant_msg_lines(&[
+            "first line",
+            "second line",
+            "third line",
+        ])),
+        RolloutItem::ResponseItem(user_msg("u2")),
+    ];
+
+    let truncated = truncate_rollout_at_assistant_read_anchor(
+        &rollout, /*assistant_message_index*/ 0, /*source_line_index*/ 1,
+        /*source_byte_offset*/ 5,
+    )
+    .expect("truncate assistant branch");
+
+    let expected = vec![
+        RolloutItem::ResponseItem(user_msg("u1")),
+        RolloutItem::ResponseItem(ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![
+                ContentItem::OutputText {
+                    text: "first line".to_string(),
+                },
+                ContentItem::OutputText {
+                    text: "second".to_string(),
+                },
+            ],
+            end_turn: None,
+            phase: None,
+        }),
+        RolloutItem::ResponseItem(branch_interruption_note()),
+    ];
+
+    assert_eq!(
+        serde_json::to_value(&truncated).unwrap(),
+        serde_json::to_value(&expected).unwrap()
+    );
+}
+
+#[test]
+fn truncates_assistant_message_after_rollbacks_using_effective_assistant_index() {
+    let rollout = vec![
+        RolloutItem::ResponseItem(user_msg("u1")),
+        RolloutItem::ResponseItem(assistant_msg("a1")),
+        RolloutItem::ResponseItem(user_msg("u2")),
+        RolloutItem::ResponseItem(assistant_msg("a2")),
+        RolloutItem::EventMsg(EventMsg::ThreadRolledBack(ThreadRolledBackEvent {
+            num_turns: 1,
+        })),
+        RolloutItem::ResponseItem(user_msg("u3")),
+        RolloutItem::ResponseItem(assistant_msg_lines(&["new branch line"])),
+    ];
+
+    let truncated = truncate_rollout_at_assistant_read_anchor(
+        &rollout, /*assistant_message_index*/ 1, /*source_line_index*/ 0,
+        /*source_byte_offset*/ 2,
+    )
+    .expect("truncate effective assistant branch");
+
+    let expected = vec![
+        RolloutItem::ResponseItem(user_msg("u1")),
+        RolloutItem::ResponseItem(assistant_msg("a1")),
+        RolloutItem::ResponseItem(user_msg("u2")),
+        RolloutItem::ResponseItem(assistant_msg("a2")),
+        RolloutItem::EventMsg(EventMsg::ThreadRolledBack(ThreadRolledBackEvent {
+            num_turns: 1,
+        })),
+        RolloutItem::ResponseItem(user_msg("u3")),
+        RolloutItem::ResponseItem(ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "new".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }),
+        RolloutItem::ResponseItem(branch_interruption_note()),
+    ];
+
+    assert_eq!(
+        serde_json::to_value(&truncated).unwrap(),
+        serde_json::to_value(&expected).unwrap()
     );
 }
 

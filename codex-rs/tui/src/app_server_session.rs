@@ -41,6 +41,7 @@ use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
+use codex_app_server_protocol::ThreadForkSnapshot;
 use codex_app_server_protocol::ThreadInjectItemsParams;
 use codex_app_server_protocol::ThreadInjectItemsResponse;
 use codex_app_server_protocol::ThreadListParams;
@@ -377,6 +378,16 @@ impl AppServerSession {
         config: Config,
         thread_id: ThreadId,
     ) -> Result<AppServerStartedThread> {
+        self.fork_thread_with_snapshot(config, thread_id, ThreadForkSnapshot::Interrupted)
+            .await
+    }
+
+    pub(crate) async fn fork_thread_with_snapshot(
+        &mut self,
+        config: Config,
+        thread_id: ThreadId,
+        snapshot: ThreadForkSnapshot,
+    ) -> Result<AppServerStartedThread> {
         let request_id = self.next_request_id();
         let response: ThreadForkResponse = self
             .client
@@ -387,6 +398,7 @@ impl AppServerSession {
                     thread_id,
                     self.thread_params_mode(),
                     self.remote_cwd_override.as_deref(),
+                    snapshot,
                 ),
             })
             .await
@@ -1013,9 +1025,11 @@ fn thread_fork_params_from_config(
     thread_id: ThreadId,
     thread_params_mode: ThreadParamsMode,
     remote_cwd_override: Option<&std::path::Path>,
+    snapshot: ThreadForkSnapshot,
 ) -> ThreadForkParams {
     ThreadForkParams {
         thread_id: thread_id.to_string(),
+        snapshot: Some(snapshot),
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(&config),
         cwd: thread_cwd_from_config(&config, thread_params_mode, remote_cwd_override),
@@ -1344,6 +1358,7 @@ mod tests {
             thread_id,
             ThreadParamsMode::Remote,
             /*remote_cwd_override*/ None,
+            ThreadForkSnapshot::Interrupted,
         );
 
         assert_eq!(start.cwd, None);
@@ -1378,6 +1393,7 @@ mod tests {
             thread_id,
             ThreadParamsMode::Remote,
             Some(remote_cwd.as_path()),
+            ThreadForkSnapshot::Interrupted,
         );
 
         assert_eq!(start.cwd.as_deref(), Some("repo/on/server"));

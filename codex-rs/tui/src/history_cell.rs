@@ -535,18 +535,50 @@ impl AgentMessageCell {
                     .iter()
                     .map(|span| span.content.as_ref())
                     .collect();
-                Self::last_non_whitespace_byte_offset(&flat, &range)
+                Self::transcript_anchor_byte_offset(&flat, &range)
                     .map(|source_byte_offset| (source_line_index, source_byte_offset))
             })
             .collect()
     }
 
-    fn last_non_whitespace_byte_offset(text: &str, range: &Range<usize>) -> Option<usize> {
-        text[range.clone()]
+    fn transcript_anchor_byte_offset(text: &str, range: &Range<usize>) -> Option<usize> {
+        let slice = &text[range.clone()];
+        let end = slice
             .char_indices()
             .rev()
             .find(|(_, ch)| !ch.is_whitespace())
-            .map(|(offset, _)| range.start + offset)
+            .map(|(offset, ch)| offset + ch.len_utf8())?;
+
+        let trimmed = &slice[..end];
+        let mut trailing_sentence_punctuation = trimmed
+            .char_indices()
+            .rev()
+            .take_while(|(_, ch)| matches!(ch, '.' | '!' | '?'))
+            .map(|(offset, ch)| (offset, ch.len_utf8()))
+            .collect::<Vec<_>>();
+        trailing_sentence_punctuation.reverse();
+
+        let word_search_end = trailing_sentence_punctuation
+            .first()
+            .map_or(end, |(offset, _)| *offset);
+        let word_end = trimmed[..word_search_end]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| Self::is_transcript_anchor_word_char(*ch))
+            .map(|(offset, ch)| offset + ch.len_utf8());
+
+        match (word_end, trailing_sentence_punctuation.last()) {
+            (Some(_), Some((offset, len))) => Some(range.start + offset + len - 1),
+            (Some(word_end), None) => Some(range.start + word_end - 1),
+            (None, _) => trimmed
+                .char_indices()
+                .last()
+                .map(|(offset, ch)| range.start + offset + ch.len_utf8() - 1),
+        }
+    }
+
+    fn is_transcript_anchor_word_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_'
     }
 
     pub(crate) fn transcript_rendered_line_index_for_anchor(
@@ -596,10 +628,9 @@ impl AgentMessageCell {
                 wrapped_rows
                     .iter()
                     .enumerate()
-                    .filter(|(_, (line_index, maybe_range))| {
+                    .rfind(|(_, (line_index, maybe_range))| {
                         *line_index == source_line_index && maybe_range.is_some()
                     })
-                    .next_back()
                     .and_then(|(rendered_line_index, (_, maybe_range))| {
                         maybe_range.as_ref().and_then(|range| {
                             (source_byte_offset >= range.end).then_some((
@@ -3101,6 +3132,42 @@ mod tests {
         // These tests only need a stable absolute cwd; using temp_dir() avoids baking Unix- or
         // Windows-specific root semantics into the fixtures.
         std::env::temp_dir()
+    }
+
+    #[test]
+    fn transcript_anchor_prefers_last_word_when_line_ends_with_space() {
+        let text = "One evening, a singer ";
+        let range = 0..text.len();
+
+        let anchor = AgentMessageCell::transcript_anchor_byte_offset(text, &range)
+            .expect("anchor should exist");
+
+        assert_eq!(&text[anchor..anchor + 1], "r");
+        assert_eq!(&text[..=anchor], "One evening, a singer");
+    }
+
+    #[test]
+    fn transcript_anchor_includes_sentence_ending_punctuation() {
+        let text = "Nobody believed him.";
+        let range = 0..text.len();
+
+        let anchor = AgentMessageCell::transcript_anchor_byte_offset(text, &range)
+            .expect("anchor should exist");
+
+        assert_eq!(&text[anchor..anchor + 1], ".");
+        assert_eq!(&text[..=anchor], text);
+    }
+
+    #[test]
+    fn transcript_anchor_excludes_non_sentence_punctuation() {
+        let text = "Keep walking,";
+        let range = 0..text.len();
+
+        let anchor = AgentMessageCell::transcript_anchor_byte_offset(text, &range)
+            .expect("anchor should exist");
+
+        assert_eq!(&text[anchor..anchor + 1], "g");
+        assert_eq!(&text[..=anchor], "Keep walking");
     }
 
     fn stdio_server_config(

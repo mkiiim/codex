@@ -15,6 +15,7 @@ use crate::shell_snapshot::ShellSnapshot;
 use crate::skills_watcher::SkillsWatcher;
 use crate::skills_watcher::SkillsWatcherEvent;
 use crate::tasks::interrupted_turn_history_marker;
+use crate::thread_rollout_truncation;
 use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::TurnStatus;
@@ -168,6 +169,18 @@ pub enum ForkSnapshot {
     /// already at a turn boundary, this returns the current persisted history
     /// unchanged.
     Interrupted,
+
+    /// Fork a branch by truncating an assistant message at a stable read anchor.
+    ///
+    /// The truncated history keeps the assistant message prefix ending at the
+    /// provided anchor, drops the unread suffix, and then appends the same
+    /// persisted interrupt marker used by live-turn interrupts so replay treats
+    /// the branch as an intentional interruption point.
+    AssistantReadAnchor {
+        assistant_message_index: usize,
+        source_line_index: usize,
+        source_byte_offset: usize,
+    },
 }
 
 /// Preserve legacy `fork_thread(usize, ...)` callsites by mapping them to the
@@ -702,6 +715,16 @@ impl ThreadManager {
                     history
                 }
             }
+            ForkSnapshot::AssistantReadAnchor {
+                assistant_message_index,
+                source_line_index,
+                source_byte_offset,
+            } => truncate_at_assistant_read_anchor(
+                history,
+                assistant_message_index,
+                source_line_index,
+                source_byte_offset,
+            )?,
         };
         Box::pin(self.state.spawn_thread(
             config,
@@ -729,6 +752,31 @@ impl ThreadManager {
             .and_then(|ops_log| ops_log.lock().ok().map(|log| log.clone()))
             .unwrap_or_default()
     }
+}
+
+fn truncate_at_assistant_read_anchor(
+    history: InitialHistory,
+    assistant_message_index: usize,
+    source_line_index: usize,
+    source_byte_offset: usize,
+) -> CodexResult<InitialHistory> {
+    let rolled = thread_rollout_truncation::truncate_rollout_at_assistant_read_anchor(
+        &history.get_rollout_items(),
+        assistant_message_index,
+        source_line_index,
+        source_byte_offset,
+    )?;
+    let history = if rolled.is_empty() {
+        InitialHistory::New
+    } else {
+        InitialHistory::Forked(rolled)
+    };
+    let snapshot_state = snapshot_turn_state(&history);
+    Ok(if snapshot_state.ends_mid_turn {
+        append_interrupted_boundary(history, snapshot_state.active_turn_id)
+    } else {
+        history
+    })
 }
 
 impl ThreadManagerState {

@@ -2925,6 +2925,11 @@ pub struct ThreadForkParams {
     #[ts(optional = nullable)]
     pub path: Option<PathBuf>,
 
+    /// Snapshot policy for the forked thread history.
+    #[experimental("thread/fork.snapshot")]
+    #[ts(optional = nullable)]
+    pub snapshot: Option<ThreadForkSnapshot>,
+
     /// Configuration overrides for the forked thread, if any.
     #[ts(optional = nullable)]
     pub model: Option<String>,
@@ -2962,6 +2967,20 @@ pub struct ThreadForkParams {
     #[experimental("thread/fork.persistFullHistory")]
     #[serde(default)]
     pub persist_extended_history: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type", export_to = "v2/")]
+pub enum ThreadForkSnapshot {
+    Interrupted,
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    AssistantReadAnchor {
+        assistant_message_index: u32,
+        source_line_index: u32,
+        source_byte_offset: u32,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]

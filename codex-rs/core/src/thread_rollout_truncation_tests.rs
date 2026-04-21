@@ -330,6 +330,42 @@ fn truncates_assistant_message_after_rollbacks_using_effective_assistant_index()
 }
 
 #[test]
+fn truncates_latest_assistant_message_at_read_anchor() {
+    let rollout = vec![
+        RolloutItem::ResponseItem(user_msg("u1")),
+        RolloutItem::ResponseItem(assistant_msg("a1")),
+        RolloutItem::ResponseItem(user_msg("u2")),
+        RolloutItem::ResponseItem(assistant_msg_lines(&["latest branch line"])),
+    ];
+
+    let truncated = truncate_rollout_at_latest_assistant_read_anchor(
+        &rollout, /*source_line_index*/ 0, /*source_byte_offset*/ 5,
+    )
+    .expect("truncate latest assistant branch");
+
+    let expected = vec![
+        RolloutItem::ResponseItem(user_msg("u1")),
+        RolloutItem::ResponseItem(assistant_msg("a1")),
+        RolloutItem::ResponseItem(user_msg("u2")),
+        RolloutItem::ResponseItem(ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "latest".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }),
+        RolloutItem::ResponseItem(branch_interruption_note()),
+    ];
+
+    assert_eq!(
+        serde_json::to_value(&truncated).unwrap(),
+        serde_json::to_value(&expected).unwrap()
+    );
+}
+
+#[test]
 fn fork_turn_positions_ignore_zero_turn_rollback_markers() {
     let rollout = vec![
         RolloutItem::ResponseItem(user_msg("u1")),

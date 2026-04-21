@@ -125,6 +125,34 @@
           ],
           "title": "AssistantReadAnchorThreadForkSnapshot",
           "type": "object"
+        },
+        {
+          "properties": {
+            "sourceByteOffset": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "sourceLineIndex": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "latestAssistantReadAnchor"
+              ],
+              "title": "LatestAssistantReadAnchorThreadForkSnapshotType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sourceByteOffset",
+            "sourceLineIndex",
+            "type"
+          ],
+          "title": "LatestAssistantReadAnchorThreadForkSnapshot",
+          "type": "object"
         }
       ]
     }

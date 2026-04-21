@@ -2930,6 +2930,16 @@ pub struct ThreadForkParams {
     #[ts(optional = nullable)]
     pub snapshot: Option<ThreadForkSnapshot>,
 
+    /// UI branch depth for the forked thread, when the fork represents a conversational branch.
+    #[experimental("thread/fork.branchContext")]
+    #[ts(optional = nullable)]
+    pub branch_depth: Option<u32>,
+
+    /// Short UI label for the branch anchor, usually the final few words at the read point.
+    #[experimental("thread/fork.branchContext")]
+    #[ts(optional = nullable)]
+    pub branch_anchor_summary: Option<String>,
+
     /// Configuration overrides for the forked thread, if any.
     #[ts(optional = nullable)]
     pub model: Option<String>,
@@ -2969,7 +2979,7 @@ pub struct ThreadForkParams {
     pub persist_extended_history: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS, ExperimentalApi)]
 #[serde(tag = "type", rename_all = "camelCase")]
 #[ts(tag = "type", export_to = "v2/")]
 pub enum ThreadForkSnapshot {
@@ -2978,6 +2988,12 @@ pub enum ThreadForkSnapshot {
     #[ts(rename_all = "camelCase")]
     AssistantReadAnchor {
         assistant_message_index: u32,
+        source_line_index: u32,
+        source_byte_offset: u32,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    LatestAssistantReadAnchor {
         source_line_index: u32,
         source_byte_offset: u32,
     },
@@ -3915,6 +3931,10 @@ pub struct Thread {
     pub id: String,
     /// Source thread id when this thread was created by forking another thread.
     pub forked_from_id: Option<String>,
+    /// UI branch depth when this thread is part of a conversational branch.
+    pub branch_depth: Option<u32>,
+    /// Short UI label for the branch anchor, usually the final few words at the read point.
+    pub branch_anchor_summary: Option<String>,
     /// Usually the first user message in the thread, if available.
     pub preview: String,
     /// Whether the thread is ephemeral and should not be materialized on disk.

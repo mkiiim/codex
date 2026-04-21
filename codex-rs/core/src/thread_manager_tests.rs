@@ -348,6 +348,29 @@ fn interrupted_fork_snapshot_appends_interrupt_boundary() {
 }
 
 #[test]
+fn branch_read_anchor_snapshot_appends_branch_boundary() {
+    let committed_history =
+        InitialHistory::Forked(vec![RolloutItem::ResponseItem(user_msg("hello"))]);
+
+    assert_eq!(
+        serde_json::to_value(
+            append_branched_boundary(committed_history, /*turn_id*/ None).get_rollout_items()
+        )
+        .expect("serialize branched fork history"),
+        serde_json::to_value(vec![
+            RolloutItem::ResponseItem(user_msg("hello")),
+            RolloutItem::EventMsg(EventMsg::TurnAborted(TurnAbortedEvent {
+                turn_id: None,
+                reason: TurnAbortReason::Branched,
+                completed_at: None,
+                duration_ms: None,
+            })),
+        ])
+        .expect("serialize expected branched fork history"),
+    );
+}
+
+#[test]
 fn interrupted_snapshot_is_not_mid_turn() {
     let interrupted_history = InitialHistory::Forked(vec![
         RolloutItem::ResponseItem(user_msg("hello")),

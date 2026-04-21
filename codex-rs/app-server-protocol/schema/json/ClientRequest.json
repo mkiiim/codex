@@ -2849,23 +2849,6 @@
       ],
       "type": "object"
     },
-    "ThreadInjectItemsParams": {
-      "properties": {
-        "items": {
-          "description": "Raw Responses API items to append to the thread's model-visible history.",
-          "items": true,
-          "type": "array"
-        },
-        "threadId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "items",
-        "threadId"
-      ],
-      "type": "object"
-    },
     "ThreadForkSnapshot": {
       "oneOf": [
         {
@@ -2917,8 +2900,53 @@
           ],
           "title": "AssistantReadAnchorThreadForkSnapshot",
           "type": "object"
+        },
+        {
+          "properties": {
+            "sourceByteOffset": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "sourceLineIndex": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "latestAssistantReadAnchor"
+              ],
+              "title": "LatestAssistantReadAnchorThreadForkSnapshotType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sourceByteOffset",
+            "sourceLineIndex",
+            "type"
+          ],
+          "title": "LatestAssistantReadAnchorThreadForkSnapshot",
+          "type": "object"
         }
       ]
+    },
+    "ThreadInjectItemsParams": {
+      "properties": {
+        "items": {
+          "description": "Raw Responses API items to append to the thread's model-visible history.",
+          "items": true,
+          "type": "array"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "items",
+        "threadId"
+      ],
+      "type": "object"
     },
     "ThreadListParams": {
       "properties": {

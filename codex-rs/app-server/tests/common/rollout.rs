@@ -133,6 +133,7 @@ pub fn create_fake_rollout_with_source(
     let meta = SessionMeta {
         id: conversation_id,
         forked_from_id: None,
+        branch_context: None,
         timestamp: meta_rfc3339.to_string(),
         cwd: PathBuf::from("/"),
         originator: "codex".to_string(),
@@ -216,6 +217,7 @@ pub fn create_fake_rollout_with_text_elements(
     let meta = SessionMeta {
         id: conversation_id,
         forked_from_id: None,
+        branch_context: None,
         timestamp: meta_rfc3339.to_string(),
         cwd: PathBuf::from("/"),
         originator: "codex".to_string(),

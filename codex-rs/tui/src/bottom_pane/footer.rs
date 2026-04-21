@@ -84,6 +84,8 @@ pub(crate) struct FooterProps {
     /// When both this label and the configured status line are available, they are rendered on the
     /// same row separated by ` · `.
     pub(crate) active_agent_label: Option<String>,
+    /// Active branch label shown while the user is in a forked thread.
+    pub(crate) branch_context_label: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -252,6 +254,13 @@ pub(crate) fn render_footer_from_props(
         " ".repeat(FOOTER_INDENT_COLS).into(),
     ))
     .render(area, buf);
+}
+
+pub(crate) fn branch_context_line(props: &FooterProps) -> Option<Line<'static>> {
+    props
+        .branch_context_label
+        .as_ref()
+        .map(|label| Line::from(label.clone()).dim())
 }
 
 pub(crate) fn left_fits(area: Rect, left_width: u16) -> bool {
@@ -597,12 +606,19 @@ fn footer_from_props_lines(
     show_shortcuts_hint: bool,
     show_queue_hint: bool,
 ) -> Vec<Line<'static>> {
-    // Passive footer context can come from the configurable status line, the
-    // active agent label, or both combined.
-    if let Some(status_line) = passive_footer_status_line(props) {
-        return vec![status_line.dim()];
+    let mut lines = Vec::new();
+    if let Some(branch_line) = branch_context_line(props) {
+        lines.push(branch_line);
     }
-    match props.mode {
+
+    // Passive footer context can come from the configurable status line and the
+    // active agent label. Branch context is rendered as its own row above it.
+    if let Some(status_line) = passive_footer_status_line(props) {
+        lines.push(status_line.dim());
+        return lines;
+    }
+
+    let mode_lines = match props.mode {
         FooterMode::QuitShortcutReminder => {
             vec![quit_shortcut_reminder_line(props.quit_shortcut_key)]
         }
@@ -641,7 +657,18 @@ fn footer_from_props_lines(
             };
             vec![left_side_line(collaboration_mode_indicator, state)]
         }
+    };
+    let hide_empty_branch_body_row = props.branch_context_label.is_some()
+        && mode_lines.iter().all(|line| line.width() == 0)
+        && collaboration_mode_indicator.is_none()
+        && props.context_window_percent.is_none()
+        && props.context_window_used_tokens.is_none()
+        && props.active_agent_label.is_none();
+    if hide_empty_branch_body_row {
+        return lines;
     }
+    lines.extend(mode_lines);
+    lines
 }
 
 /// Returns the contextual footer row when the footer is not busy showing an instructional hint.
@@ -1094,6 +1121,8 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::Backend;
     use ratatui::backend::TestBackend;
+    use ratatui::layout::Constraint;
+    use ratatui::layout::Layout;
 
     fn snapshot_footer(name: &str, props: FooterProps) {
         snapshot_footer_with_mode_indicator(
@@ -1109,7 +1138,23 @@ mod tests {
     ) {
         terminal
             .draw(|f| {
-                let area = Rect::new(0, 0, f.area().width, height);
+                let mut area = Rect::new(0, 0, f.area().width, height);
+                let body_props;
+                let props = if let Some(line) = branch_context_line(props)
+                    && area.height > 0
+                {
+                    let [branch_rect, footer_rect] =
+                        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+                    render_footer_line(branch_rect, f.buffer_mut(), line);
+                    area = footer_rect;
+                    body_props = FooterProps {
+                        branch_context_label: None,
+                        ..props.clone()
+                    };
+                    &body_props
+                } else {
+                    props
+                };
                 let show_cycle_hint = !props.is_task_running;
                 let show_shortcuts_hint = match props.mode {
                     FooterMode::ComposerEmpty => true,
@@ -1309,6 +1354,7 @@ mod tests {
                 status_line_value: None,
                 status_line_enabled: false,
                 active_agent_label: None,
+                branch_context_label: None,
             },
         );
 
@@ -1327,6 +1373,7 @@ mod tests {
                 status_line_value: None,
                 status_line_enabled: false,
                 active_agent_label: None,
+                branch_context_label: None,
             },
         );
 
@@ -1345,6 +1392,7 @@ mod tests {
                 status_line_value: None,
                 status_line_enabled: false,
                 active_agent_label: None,
+                branch_context_label: None,
             },
         );
 
@@ -1363,6 +1411,7 @@ mod tests {
                 status_line_value: None,
                 status_line_enabled: false,
                 active_agent_label: None,
+                branch_context_label: None,
             },
         );
 
@@ -1381,6 +1430,7 @@ mod tests {
                 status_line_value: None,
                 status_line_enabled: false,
                 active_agent_label: None,
+                branch_context_label: None,
             },
         );
 
@@ -1399,6 +1449,7 @@ mod tests {
                 status_line_value: None,
                 status_line_enabled: false,
                 active_agent_label: None,
+                branch_context_label: None,
             },
         );
 
@@ -1417,6 +1468,7 @@ mod tests {
                 status_line_value: None,
                 status_line_enabled: false,
                 active_agent_label: None,
+                branch_context_label: None,
             },
         );
 
@@ -1435,6 +1487,7 @@ mod tests {
                 status_line_value: None,
                 status_line_enabled: false,
                 active_agent_label: None,
+                branch_context_label: None,
             },
         );
 
@@ -1453,6 +1506,7 @@ mod tests {
                 status_line_value: None,
                 status_line_enabled: false,
                 active_agent_label: None,
+                branch_context_label: None,
             },
         );
 
@@ -1471,6 +1525,7 @@ mod tests {
                 status_line_value: None,
                 status_line_enabled: false,
                 active_agent_label: None,
+                branch_context_label: None,
             },
         );
 
@@ -1487,6 +1542,7 @@ mod tests {
             status_line_value: None,
             status_line_enabled: false,
             active_agent_label: None,
+            branch_context_label: None,
         };
 
         snapshot_footer_with_mode_indicator(
@@ -1516,6 +1572,7 @@ mod tests {
             status_line_value: None,
             status_line_enabled: false,
             active_agent_label: None,
+            branch_context_label: None,
         };
 
         snapshot_footer_with_mode_indicator(
@@ -1538,6 +1595,7 @@ mod tests {
             status_line_value: Some(Line::from("Status line content".to_string())),
             status_line_enabled: true,
             active_agent_label: None,
+            branch_context_label: None,
         };
 
         snapshot_footer("footer_status_line_overrides_shortcuts", props);
@@ -1555,6 +1613,7 @@ mod tests {
             status_line_value: Some(Line::from("Status line content".to_string())),
             status_line_enabled: true,
             active_agent_label: None,
+            branch_context_label: None,
         };
 
         snapshot_footer("footer_status_line_yields_to_queue_hint", props);
@@ -1572,6 +1631,7 @@ mod tests {
             status_line_value: Some(Line::from("Status line content".to_string())),
             status_line_enabled: true,
             active_agent_label: None,
+            branch_context_label: None,
         };
 
         snapshot_footer("footer_status_line_overrides_draft_idle", props);
@@ -1589,6 +1649,7 @@ mod tests {
             status_line_value: None, // command timed out / empty
             status_line_enabled: true,
             active_agent_label: None,
+            branch_context_label: None,
         };
 
         snapshot_footer_with_mode_indicator(
@@ -1611,6 +1672,7 @@ mod tests {
             status_line_value: None,
             status_line_enabled: false,
             active_agent_label: None,
+            branch_context_label: None,
         };
 
         snapshot_footer_with_mode_indicator(
@@ -1633,6 +1695,7 @@ mod tests {
             status_line_value: None,
             status_line_enabled: true,
             active_agent_label: None,
+            branch_context_label: None,
         };
 
         // has status line and no collaboration mode
@@ -1658,6 +1721,7 @@ mod tests {
             )),
             status_line_enabled: true,
             active_agent_label: None,
+            branch_context_label: None,
         };
 
         snapshot_footer_with_mode_indicator(
@@ -1680,6 +1744,7 @@ mod tests {
             status_line_value: None,
             status_line_enabled: false,
             active_agent_label: Some("Robie [explorer]".to_string()),
+            branch_context_label: None,
         };
 
         snapshot_footer("footer_active_agent_label", props);
@@ -1694,9 +1759,74 @@ mod tests {
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
             context_window_percent: None,
             context_window_used_tokens: None,
+            status_line_value: None,
+            status_line_enabled: false,
+            active_agent_label: None,
+            branch_context_label: Some(
+                "branch depth 2: \"...payment terms, and late-fee rules.\"".to_string(),
+            ),
+        };
+
+        snapshot_footer("footer_branch_context_label", props);
+
+        let props = FooterProps {
+            mode: FooterMode::ComposerEmpty,
+            esc_backtrack_hint: false,
+            use_shift_enter_hint: false,
+            is_task_running: false,
+            collaboration_modes_enabled: false,
+            is_wsl: false,
+            quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+            context_window_percent: None,
+            context_window_used_tokens: None,
+            status_line_value: Some(Line::from(
+                "gpt-5.4 medium · Context 92% left · /Volumes/Orico Samsung 970 EVO Plus"
+                    .to_string(),
+            )),
+            status_line_enabled: true,
+            active_agent_label: None,
+            branch_context_label: Some("branch depth 1".to_string()),
+        };
+
+        snapshot_footer_with_mode_indicator(
+            "footer_branch_context_label_precedes_status_line",
+            /*width*/ 80,
+            &props,
+            /*collaboration_mode_indicator*/ None,
+        );
+
+        let props = FooterProps {
+            mode: FooterMode::ComposerHasDraft,
+            esc_backtrack_hint: false,
+            use_shift_enter_hint: false,
+            is_task_running: false,
+            collaboration_modes_enabled: false,
+            is_wsl: false,
+            quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+            context_window_percent: None,
+            context_window_used_tokens: None,
+            status_line_value: None,
+            status_line_enabled: false,
+            active_agent_label: None,
+            branch_context_label: Some("branch depth 1: \"...fee rules.\"".to_string()),
+        };
+
+        snapshot_footer("footer_branch_context_label_with_draft", props);
+
+        let props = FooterProps {
+            mode: FooterMode::ComposerEmpty,
+            esc_backtrack_hint: false,
+            use_shift_enter_hint: false,
+            is_task_running: false,
+            collaboration_modes_enabled: false,
+            is_wsl: false,
+            quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+            context_window_percent: None,
+            context_window_used_tokens: None,
             status_line_value: Some(Line::from("Status line content".to_string())),
             status_line_enabled: true,
             active_agent_label: Some("Robie [explorer]".to_string()),
+            branch_context_label: None,
         };
 
         snapshot_footer("footer_status_line_with_active_agent_label", props);
@@ -1720,6 +1850,7 @@ mod tests {
             )),
             status_line_enabled: true,
             active_agent_label: None,
+            branch_context_label: None,
         };
 
         let screen = render_footer_with_mode_indicator(

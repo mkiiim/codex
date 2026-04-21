@@ -1290,6 +1290,12 @@ impl BottomPane {
             self.request_redraw();
         }
     }
+
+    pub(crate) fn set_branch_context_label(&mut self, label: Option<String>) {
+        if self.composer.set_branch_context_label(label) {
+            self.request_redraw();
+        }
+    }
 }
 
 #[cfg(not(target_os = "linux"))]

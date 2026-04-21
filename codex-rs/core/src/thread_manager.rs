@@ -173,11 +173,21 @@ pub enum ForkSnapshot {
     /// Fork a branch by truncating an assistant message at a stable read anchor.
     ///
     /// The truncated history keeps the assistant message prefix ending at the
-    /// provided anchor, drops the unread suffix, and then appends the same
-    /// persisted interrupt marker used by live-turn interrupts so replay treats
-    /// the branch as an intentional interruption point.
+    /// provided anchor, drops the unread suffix, and then appends a branch
+    /// boundary so replay treats the fork point as intentional.
     AssistantReadAnchor {
         assistant_message_index: usize,
+        source_line_index: usize,
+        source_byte_offset: usize,
+    },
+
+    /// Fork a branch by truncating the latest assistant message at a stable
+    /// read anchor.
+    ///
+    /// This is intended for UI flows that identify the branch point from the
+    /// active/latest assistant reply rather than from a persisted transcript
+    /// ordinal, which can diverge after resume or nested branch navigation.
+    LatestAssistantReadAnchor {
         source_line_index: usize,
         source_byte_offset: usize,
     },
@@ -725,6 +735,14 @@ impl ThreadManager {
                 source_line_index,
                 source_byte_offset,
             )?,
+            ForkSnapshot::LatestAssistantReadAnchor {
+                source_line_index,
+                source_byte_offset,
+            } => truncate_at_latest_assistant_read_anchor(
+                history,
+                source_line_index,
+                source_byte_offset,
+            )?,
         };
         Box::pin(self.state.spawn_thread(
             config,
@@ -773,7 +791,30 @@ fn truncate_at_assistant_read_anchor(
     };
     let snapshot_state = snapshot_turn_state(&history);
     Ok(if snapshot_state.ends_mid_turn {
-        append_interrupted_boundary(history, snapshot_state.active_turn_id)
+        append_branched_boundary(history, snapshot_state.active_turn_id)
+    } else {
+        history
+    })
+}
+
+fn truncate_at_latest_assistant_read_anchor(
+    history: InitialHistory,
+    source_line_index: usize,
+    source_byte_offset: usize,
+) -> CodexResult<InitialHistory> {
+    let rolled = thread_rollout_truncation::truncate_rollout_at_latest_assistant_read_anchor(
+        &history.get_rollout_items(),
+        source_line_index,
+        source_byte_offset,
+    )?;
+    let history = if rolled.is_empty() {
+        InitialHistory::New
+    } else {
+        InitialHistory::Forked(rolled)
+    };
+    let snapshot_state = snapshot_turn_state(&history);
+    Ok(if snapshot_state.ends_mid_turn {
+        append_branched_boundary(history, snapshot_state.active_turn_id)
     } else {
         history
     })
@@ -1169,6 +1210,29 @@ fn append_interrupted_boundary(history: InitialHistory, turn_id: Option<String>)
             resumed
                 .history
                 .push(RolloutItem::ResponseItem(interrupted_turn_history_marker()));
+            resumed.history.push(aborted_event);
+            InitialHistory::Forked(resumed.history)
+        }
+    }
+}
+
+fn append_branched_boundary(history: InitialHistory, turn_id: Option<String>) -> InitialHistory {
+    let aborted_event = RolloutItem::EventMsg(EventMsg::TurnAborted(TurnAbortedEvent {
+        turn_id,
+        reason: TurnAbortReason::Branched,
+        completed_at: None,
+        duration_ms: None,
+    }));
+
+    match history {
+        InitialHistory::New | InitialHistory::Cleared => {
+            InitialHistory::Forked(vec![aborted_event])
+        }
+        InitialHistory::Forked(mut history) => {
+            history.push(aborted_event);
+            InitialHistory::Forked(history)
+        }
+        InitialHistory::Resumed(mut resumed) => {
             resumed.history.push(aborted_event);
             InitialHistory::Forked(resumed.history)
         }

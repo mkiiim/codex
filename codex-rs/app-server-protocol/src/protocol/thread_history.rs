@@ -884,8 +884,13 @@ impl ThreadHistoryBuilder {
     }
 
     fn handle_turn_aborted(&mut self, payload: &TurnAbortedEvent) {
+        let branched = payload.reason == codex_protocol::protocol::TurnAbortReason::Branched;
         let apply_abort = |turn: &mut PendingTurn| {
-            turn.status = TurnStatus::Interrupted;
+            turn.status = if branched {
+                TurnStatus::Completed
+            } else {
+                TurnStatus::Interrupted
+            };
             turn.completed_at = payload.completed_at;
             turn.duration_ms = payload.duration_ms;
         };
@@ -897,7 +902,11 @@ impl ThreadHistoryBuilder {
             }
 
             if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) {
-                turn.status = TurnStatus::Interrupted;
+                turn.status = if branched {
+                    TurnStatus::Completed
+                } else {
+                    TurnStatus::Interrupted
+                };
                 turn.completed_at = payload.completed_at;
                 turn.duration_ms = payload.duration_ms;
                 return;
@@ -1602,6 +1611,38 @@ mod tests {
                 memory_citation: None,
             }
         );
+    }
+
+    #[test]
+    fn marks_branched_turn_boundary_as_completed() {
+        let events = vec![
+            EventMsg::UserMessage(UserMessageEvent {
+                message: "Explain the plan".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+            }),
+            EventMsg::AgentMessage(AgentMessageEvent {
+                message: "Read up to here.".into(),
+                phase: None,
+                memory_citation: None,
+            }),
+            EventMsg::TurnAborted(TurnAbortedEvent {
+                turn_id: Some("turn-1".into()),
+                reason: TurnAbortReason::Branched,
+                completed_at: None,
+                duration_ms: None,
+            }),
+        ];
+
+        let items = events
+            .into_iter()
+            .map(RolloutItem::EventMsg)
+            .collect::<Vec<_>>();
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].status, TurnStatus::Completed);
     }
 
     #[test]

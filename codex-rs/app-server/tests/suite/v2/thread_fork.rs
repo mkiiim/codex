@@ -14,9 +14,12 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
+use codex_app_server_protocol::ThreadForkSnapshot;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
+use codex_app_server_protocol::ThreadResumeParams;
+use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStartedNotification;
@@ -31,6 +34,7 @@ use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
+use std::io::Write;
 use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -184,6 +188,139 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
     let started: ThreadStartedNotification =
         serde_json::from_value(notif.params.expect("params must be present"))?;
     assert_eq!(started.thread, thread);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_fork_persists_branch_context_for_resume() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let conversation_id = create_fake_rollout(
+        codex_home.path(),
+        "2025-01-05T12-00-00",
+        "2025-01-05T12:00:00Z",
+        "Saved user message",
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let anchor_summary = "payment terms, and late-fee rules.".to_string();
+    let fork_id = mcp
+        .send_thread_fork_request(ThreadForkParams {
+            thread_id: conversation_id,
+            branch_depth: Some(2),
+            branch_anchor_summary: Some(anchor_summary.clone()),
+            ..Default::default()
+        })
+        .await?;
+    let fork_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(fork_id)),
+    )
+    .await??;
+    let ThreadForkResponse { thread: forked, .. } = to_response::<ThreadForkResponse>(fork_resp)?;
+
+    assert_eq!(forked.branch_depth, Some(2));
+    assert_eq!(forked.branch_anchor_summary, Some(anchor_summary.clone()));
+
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: forked.id,
+            ..Default::default()
+        })
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let ThreadResumeResponse {
+        thread: resumed, ..
+    } = to_response::<ThreadResumeResponse>(resume_resp)?;
+
+    assert_eq!(resumed.branch_depth, Some(2));
+    assert_eq!(resumed.branch_anchor_summary, Some(anchor_summary));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_fork_latest_assistant_anchor_truncates_latest_assistant_message() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let conversation_id = create_fake_rollout(
+        codex_home.path(),
+        "2025-01-05T12-00-00",
+        "2025-01-05T12:00:00Z",
+        "Saved user message",
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    let original_path = codex_home
+        .path()
+        .join("sessions")
+        .join("2025")
+        .join("01")
+        .join("05")
+        .join(format!(
+            "rollout-2025-01-05T12-00-00-{conversation_id}.jsonl"
+        ));
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&original_path)?;
+    writeln!(
+        file,
+        "{}",
+        json!({
+            "timestamp": "2025-01-05T12:00:00Z",
+            "type":"response_item",
+            "payload": {
+                "type":"message",
+                "role":"assistant",
+                "content":[{"type":"output_text","text": "latest branch line"}]
+            }
+        })
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let fork_id = mcp
+        .send_thread_fork_request(ThreadForkParams {
+            thread_id: conversation_id,
+            snapshot: Some(ThreadForkSnapshot::LatestAssistantReadAnchor {
+                source_line_index: 0,
+                source_byte_offset: 5,
+            }),
+            ..Default::default()
+        })
+        .await?;
+    let fork_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(fork_id)),
+    )
+    .await??;
+    let ThreadForkResponse { thread, .. } = to_response::<ThreadForkResponse>(fork_resp)?;
+
+    assert_eq!(thread.turns.len(), 1);
+    assert_eq!(thread.turns[0].status, TurnStatus::Completed);
+    let fork_rollout = std::fs::read_to_string(thread.path.expect("fork path"))?;
+    assert!(
+        fork_rollout.contains("latest"),
+        "fork rollout should contain truncated assistant text: {fork_rollout}"
+    );
+    assert!(
+        !fork_rollout.contains("branch line"),
+        "fork rollout should drop unread assistant suffix: {fork_rollout}"
+    );
 
     Ok(())
 }

@@ -183,6 +183,28 @@ pub(crate) fn truncate_rollout_at_assistant_read_anchor(
     Ok(prefix)
 }
 
+pub(crate) fn truncate_rollout_at_latest_assistant_read_anchor(
+    items: &[RolloutItem],
+    source_line_index: usize,
+    source_byte_offset: usize,
+) -> CodexResult<Vec<RolloutItem>> {
+    let assistant_message_index = assistant_message_positions_in_rollout(items)
+        .len()
+        .checked_sub(1)
+        .ok_or_else(|| {
+            CodexErr::InvalidRequest(
+                "latest assistant read anchor requires an assistant message".to_string(),
+            )
+        })?;
+
+    truncate_rollout_at_assistant_read_anchor(
+        items,
+        assistant_message_index,
+        source_line_index,
+        source_byte_offset,
+    )
+}
+
 fn is_real_user_message_boundary(item: &ResponseItem) -> bool {
     matches!(
         event_mapping::parse_turn_item(item),

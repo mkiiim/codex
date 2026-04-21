@@ -1,0 +1,7 @@
+---
+source: tui/src/bottom_pane/footer.rs
+assertion_line: 1299
+expression: terminal.backend()
+---
+"  branch depth 2: "...payment terms, and late-fee rules."                       "
+"  ? for shortcuts                                            100% context left  "

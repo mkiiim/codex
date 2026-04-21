@@ -11,6 +11,9 @@ pub(crate) fn agent_status_from_event(msg: &EventMsg) -> Option<AgentStatus> {
             codex_protocol::protocol::TurnAbortReason::Interrupted => {
                 Some(AgentStatus::Interrupted)
             }
+            codex_protocol::protocol::TurnAbortReason::Branched => {
+                Some(AgentStatus::Completed(None))
+            }
             _ => Some(AgentStatus::Errored(format!("{:?}", ev.reason))),
         },
         EventMsg::Error(ev) => Some(AgentStatus::Errored(ev.message.clone())),

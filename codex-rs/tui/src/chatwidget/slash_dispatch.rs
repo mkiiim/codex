@@ -141,6 +141,9 @@ impl ChatWidget {
             SlashCommand::Fork => {
                 self.app_event_tx.send(AppEvent::ForkCurrentSession);
             }
+            SlashCommand::Branch => {
+                self.add_error_message("Usage: /branch <copied assistant text>".to_string());
+            }
             SlashCommand::Init => {
                 let init_target = self.config.cwd.join(DEFAULT_AGENTS_MD_FILENAME);
                 if init_target.exists() {
@@ -597,6 +600,9 @@ impl ChatWidget {
                 );
                 self.request_side_conversation(parent_thread_id, Some(user_message));
             }
+            SlashCommand::Branch if !trimmed.is_empty() => {
+                self.app_event_tx.send(AppEvent::BranchFromSnippet(args));
+            }
             SlashCommand::Review if !trimmed.is_empty() => {
                 self.submit_op(AppCommand::review(ReviewRequest {
                     target: ReviewTarget::Custom { instructions: args },
@@ -737,6 +743,7 @@ impl ChatWidget {
             | SlashCommand::Clear
             | SlashCommand::Resume
             | SlashCommand::Fork
+            | SlashCommand::Branch
             | SlashCommand::Init
             | SlashCommand::Compact
             | SlashCommand::Review

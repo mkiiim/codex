@@ -21,6 +21,12 @@ export type ThreadForkParams = {threadId: string, /**
  * If specified, the thread_id param will be ignored.
  */
 path?: string | null, /**
+ * UI branch depth for the forked thread, when the fork represents a conversational branch.
+ */
+branchDepth?: number | null, /**
+ * Short UI label for the branch anchor, usually the final few words at the read point.
+ */
+branchAnchorSummary?: string | null, /**
  * Configuration overrides for the forked thread, if any.
  */
 model?: string | null, modelProvider?: string | null, serviceTier?: ServiceTier | null | null, cwd?: string | null, approvalPolicy?: AskForApproval | null, /**

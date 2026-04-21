@@ -257,6 +257,8 @@ pub(super) async fn make_chatwidget_manual(
         normal_placeholder_text: "Ask Codex to do anything".to_string(),
         side_placeholder_text: "Check recently modified functions for compatibility".to_string(),
         forked_from: None,
+        branch_depth: 0,
+        branch_anchor_summary: None,
         interrupted_turn_notice_mode: InterruptedTurnNoticeMode::Default,
         frame_requester: FrameRequester::test_dummy(),
         show_welcome_banner: true,

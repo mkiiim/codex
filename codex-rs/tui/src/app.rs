@@ -12,6 +12,7 @@ use crate::app_event_sender::AppEventSender;
 use crate::app_server_approval_conversions::network_approval_context_to_core;
 use crate::app_server_session::AppServerSession;
 use crate::app_server_session::AppServerStartedThread;
+use crate::app_server_session::ThreadBranchContext;
 use crate::app_server_session::ThreadSessionState;
 use crate::app_server_session::app_server_rate_limit_snapshots_to_core;
 use crate::bottom_pane::ApprovalRequest;
@@ -20,6 +21,8 @@ use crate::bottom_pane::McpServerElicitationFormRequest;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
+use crate::branch_locator::BranchSnippetError;
+use crate::branch_locator::locate_branch_snippet;
 use crate::chatwidget::ChatWidget;
 use crate::chatwidget::ExternalEditorState;
 use crate::chatwidget::ReplayKind;
@@ -57,6 +60,7 @@ use crate::multi_agents::format_agent_picker_item_name;
 use crate::multi_agents::next_agent_shortcut_matches;
 use crate::multi_agents::previous_agent_shortcut_matches;
 use crate::pager_overlay::Overlay;
+use crate::pager_overlay::TranscriptForkAnchor;
 use crate::pager_overlay::TranscriptReadPosition;
 use crate::pager_overlay::TranscriptReplyTarget;
 use crate::read_session_model;
@@ -142,6 +146,7 @@ use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SkillErrorInfo;
 use codex_protocol::protocol::TokenUsage;
+use codex_protocol::user_input::UserInput;
 use codex_terminal_detection::user_agent;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use color_eyre::eyre::Result;
@@ -1102,10 +1107,11 @@ pub(crate) struct App {
     pending_plugin_enabled_writes: HashMap<String, Option<bool>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PendingTranscriptReply {
     pub(crate) read_position: TranscriptReadPosition,
-    pub(crate) assistant_message_index: usize,
+    pub(crate) fork_snapshot: codex_app_server_protocol::ThreadForkSnapshot,
+    pub(crate) anchor_summary: Option<String>,
     pub(crate) current_index: usize,
     pub(crate) total: usize,
 }
@@ -1899,6 +1905,10 @@ impl App {
     /// recently began switching.
     fn current_displayed_thread_id(&self) -> Option<ThreadId> {
         self.active_thread_id.or(self.chat_widget.thread_id())
+    }
+
+    fn active_branch_parent_thread_id(&self) -> Option<ThreadId> {
+        self.chat_widget.branch_parent_thread_id()
     }
 
     fn ignore_same_thread_resume(
@@ -3463,6 +3473,8 @@ impl App {
             .unwrap_or(ThreadSessionState {
                 thread_id,
                 forked_from_id: None,
+                branch_depth: None,
+                branch_anchor_summary: None,
                 thread_name: None,
                 model: self.chat_widget.current_model().to_string(),
                 model_provider_id: self.config.model_provider_id.clone(),
@@ -3480,6 +3492,12 @@ impl App {
             });
         session.thread_id = thread_id;
         session.thread_name = thread.name.clone();
+        session.forked_from_id = thread
+            .forked_from_id
+            .as_deref()
+            .and_then(|id| ThreadId::from_string(id).ok());
+        session.branch_depth = thread.branch_depth;
+        session.branch_anchor_summary = thread.branch_anchor_summary.clone();
         session.model_provider_id = thread.model_provider.clone();
         session.cwd = thread.cwd.clone();
         session.instruction_source_paths = Vec::new();
@@ -4836,6 +4854,10 @@ impl App {
 
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::BranchFromSnippet(snippet) => {
+                self.handle_branch_from_snippet(tui, app_server, &snippet)
+                    .await?;
+            }
             AppEvent::InsertHistoryCell(cell) => {
                 let cell: Arc<dyn HistoryCell> = cell.into();
                 if let Some(Overlay::Transcript(t)) = &mut self.overlay {
@@ -4911,9 +4933,16 @@ impl App {
                 let op = AppCommand::from(op);
                 if matches!(op.view(), AppCommandView::UserTurn { .. }) {
                     if let Some(thread_id) = self.chat_widget.thread_id() {
-                        let target_thread_id = self
+                        let target_thread_id = match self
                             .maybe_fork_pending_transcript_reply(tui, app_server, thread_id)
-                            .await?;
+                            .await
+                        {
+                            Ok(thread_id) => thread_id,
+                            Err(err) => {
+                                self.handle_pending_transcript_reply_fork_failure(tui, &op, &err);
+                                return Ok(AppRunControl::Continue);
+                            }
+                        };
                         self.submit_thread_op(app_server, target_thread_id, op)
                             .await?;
                     } else {
@@ -4929,8 +4958,16 @@ impl App {
                 let thread_id = if matches!(op.view(), AppCommandView::UserTurn { .. })
                     && self.active_thread_id == Some(thread_id)
                 {
-                    self.maybe_fork_pending_transcript_reply(tui, app_server, thread_id)
-                        .await?
+                    match self
+                        .maybe_fork_pending_transcript_reply(tui, app_server, thread_id)
+                        .await
+                    {
+                        Ok(thread_id) => thread_id,
+                        Err(err) => {
+                            self.handle_pending_transcript_reply_fork_failure(tui, &op, &err);
+                            return Ok(AppRunControl::Continue);
+                        }
+                    }
                 } else {
                     thread_id
                 };
@@ -6628,21 +6665,55 @@ impl App {
         tui.frame_requester().schedule_frame();
     }
 
+    fn fork_snapshot_from_transcript_reply_target(
+        &self,
+        reply_target: &TranscriptReplyTarget,
+    ) -> codex_app_server_protocol::ThreadForkSnapshot {
+        let fork_anchor =
+            reply_target
+                .fork_anchor
+                .unwrap_or_else(|| TranscriptForkAnchor::Indexed {
+                    assistant_message_index: self.assistant_message_index_for_transcript_cell(
+                        reply_target.read_position.cell_index,
+                    ),
+                    source_line_index: reply_target.read_position.source_line_index,
+                    source_byte_offset: reply_target.read_position.source_byte_offset,
+                });
+        match fork_anchor {
+            TranscriptForkAnchor::Indexed {
+                assistant_message_index,
+                source_line_index,
+                source_byte_offset,
+            } => codex_app_server_protocol::ThreadForkSnapshot::AssistantReadAnchor {
+                assistant_message_index: u32::try_from(assistant_message_index).unwrap_or(u32::MAX),
+                source_line_index: u32::try_from(source_line_index).unwrap_or(u32::MAX),
+                source_byte_offset: u32::try_from(source_byte_offset).unwrap_or(u32::MAX),
+            },
+            TranscriptForkAnchor::LatestAssistant {
+                source_line_index,
+                source_byte_offset,
+            } => codex_app_server_protocol::ThreadForkSnapshot::LatestAssistantReadAnchor {
+                source_line_index: u32::try_from(source_line_index).unwrap_or(u32::MAX),
+                source_byte_offset: u32::try_from(source_byte_offset).unwrap_or(u32::MAX),
+            },
+        }
+    }
+
     fn set_pending_transcript_reply(&mut self, reply_target: TranscriptReplyTarget) {
+        let fork_snapshot = self.fork_snapshot_from_transcript_reply_target(&reply_target);
         let pending_reply = PendingTranscriptReply {
             read_position: reply_target.read_position,
-            assistant_message_index: self
-                .assistant_message_index_for_transcript_cell(reply_target.read_position.cell_index),
+            fork_snapshot,
+            anchor_summary: reply_target.anchor_summary,
             current_index: reply_target.current_index,
             total: reply_target.total,
         };
+        let current_index = pending_reply.current_index;
+        let total = pending_reply.total;
         self.pending_transcript_reply = Some(pending_reply);
         self.chat_widget.set_footer_hint_override(Some(vec![(
             "transcript".to_string(),
-            format!(
-                "replying from {}/{}",
-                pending_reply.current_index, pending_reply.total
-            ),
+            format!("replying from {current_index}/{total}"),
         )]));
     }
 
@@ -6660,37 +6731,240 @@ impl App {
             .saturating_sub(1)
     }
 
+    async fn handle_branch_from_snippet(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
+        snippet: &str,
+    ) -> Result<()> {
+        let width = tui.terminal.last_known_screen_size.width;
+        match locate_branch_snippet(
+            &self.transcript_cells,
+            self.chat_widget.last_agent_markdown_text(),
+            snippet,
+            width,
+        ) {
+            Ok(reply_target) => {
+                self.start_branch_from_reply_target(tui, app_server, reply_target)
+                    .await?;
+            }
+            Err(BranchSnippetError::EmptySnippet) => {
+                self.chat_widget
+                    .add_error_message("Usage: /branch <copied assistant text>".to_string());
+            }
+            Err(BranchSnippetError::NoAssistantResponse) => {
+                self.chat_widget.add_error_message(
+                    "'/branch' needs an assistant response to branch from.".to_string(),
+                );
+            }
+            Err(BranchSnippetError::NoMatch) => {
+                self.chat_widget.add_error_message(
+                    "Could not find that text in the latest assistant response.".to_string(),
+                );
+            }
+            Err(BranchSnippetError::AmbiguousMatch) => {
+                self.chat_widget.add_error_message(
+                    "That text appears more than once in the latest assistant response. Copy a longer snippet.".to_string(),
+                );
+            }
+            Err(BranchSnippetError::NoAnchor) => {
+                self.chat_widget.add_error_message(
+                    "Found the copied text, but could not determine a branch anchor.".to_string(),
+                );
+            }
+        }
+        tui.frame_requester().schedule_frame();
+        Ok(())
+    }
+
+    async fn start_branch_from_reply_target(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
+        reply_target: TranscriptReplyTarget,
+    ) -> Result<()> {
+        let Some(parent_thread_id) = self.chat_widget.thread_id() else {
+            self.chat_widget.add_error_message(
+                "'/branch' is unavailable before the current conversation has started.".to_string(),
+            );
+            return Ok(());
+        };
+
+        self.session_telemetry.counter(
+            "codex.thread.branch",
+            /*inc*/ 1,
+            &[("source", "slash_command")],
+        );
+        self.refresh_in_memory_config_from_disk_best_effort("starting a branch")
+            .await;
+
+        let fork_snapshot = self.fork_snapshot_from_transcript_reply_target(&reply_target);
+        let anchor_summary = reply_target.anchor_summary.clone();
+        let branch_notice = branch_created_notice(anchor_summary.as_deref());
+        let branch_depth = self.chat_widget.branch_depth().saturating_add(1);
+        let rollout_path = self
+            .chat_widget
+            .rollout_path()
+            .filter(|path| rollout_path_is_resumable(path));
+        match app_server
+            .fork_thread_with_snapshot(
+                self.config.clone(),
+                parent_thread_id,
+                rollout_path,
+                fork_snapshot,
+                Some(ThreadBranchContext {
+                    depth: u32::try_from(branch_depth).unwrap_or(u32::MAX),
+                    anchor_summary,
+                }),
+            )
+            .await
+        {
+            Ok(forked) => {
+                let child_thread_id = forked.session.thread_id;
+                let channel = self.ensure_thread_channel(child_thread_id);
+                {
+                    let mut store = channel.store.lock().await;
+                    store.set_session(forked.session, forked.turns);
+                }
+                if let Err(err) = self
+                    .select_agent_thread(tui, app_server, child_thread_id)
+                    .await
+                {
+                    self.chat_widget.add_error_message(format!(
+                        "Failed to switch into branch {child_thread_id}: {err}"
+                    ));
+                    return Ok(());
+                }
+                self.chat_widget.add_info_message(
+                    branch_notice,
+                    Some(
+                        "Type your reply, or press Esc with an empty composer to return."
+                            .to_string(),
+                    ),
+                );
+            }
+            Err(err) => {
+                self.chat_widget
+                    .add_error_message(Self::branch_start_error_message(&err));
+            }
+        }
+        Ok(())
+    }
+
+    fn branch_start_error_message(err: &color_eyre::Report) -> String {
+        if err.chain().any(|cause| {
+            let message = cause.to_string();
+            message.contains("no rollout found for thread id")
+                || message.contains("includeTurns is unavailable before first user message")
+        }) {
+            "Could not create the branch because the current conversation is not available for forking yet.".to_string()
+        } else {
+            format!("Failed to create branch: {err}")
+        }
+    }
+
+    async fn maybe_return_from_branch(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
+    ) -> bool {
+        if self.overlay.is_none()
+            && self.chat_widget.no_modal_or_popup_active()
+            && self.chat_widget.composer_is_empty()
+            && let Some(parent_thread_id) = self.active_branch_parent_thread_id()
+        {
+            if self
+                .select_agent_thread(tui, app_server, parent_thread_id)
+                .await
+                .is_err()
+            {
+                return false;
+            }
+            self.active_thread_id == Some(parent_thread_id)
+        } else {
+            false
+        }
+    }
+
     async fn maybe_fork_pending_transcript_reply(
         &mut self,
         tui: &mut tui::Tui,
         app_server: &mut AppServerSession,
         thread_id: ThreadId,
     ) -> Result<ThreadId> {
-        let Some(pending_reply) = self.pending_transcript_reply else {
+        let Some(pending_reply) = self.pending_transcript_reply.clone() else {
             return Ok(thread_id);
         };
 
+        let branch_depth = self.chat_widget.branch_depth().saturating_add(1);
+        let rollout_path = self
+            .chat_widget
+            .rollout_path()
+            .filter(|path| rollout_path_is_resumable(path));
         let started = app_server
             .fork_thread_with_snapshot(
                 self.config.clone(),
                 thread_id,
-                codex_app_server_protocol::ThreadForkSnapshot::AssistantReadAnchor {
-                    assistant_message_index: u32::try_from(pending_reply.assistant_message_index)
-                        .unwrap_or(u32::MAX),
-                    source_line_index: u32::try_from(pending_reply.read_position.source_line_index)
-                        .unwrap_or(u32::MAX),
-                    source_byte_offset: u32::try_from(
-                        pending_reply.read_position.source_byte_offset,
-                    )
-                    .unwrap_or(u32::MAX),
-                },
+                rollout_path,
+                pending_reply.fork_snapshot,
+                Some(ThreadBranchContext {
+                    depth: u32::try_from(branch_depth).unwrap_or(u32::MAX),
+                    anchor_summary: pending_reply.anchor_summary.clone(),
+                }),
             )
             .await?;
         self.shutdown_current_thread(app_server).await;
-        self.replace_chat_widget_with_app_server_thread(tui, app_server, started)
-            .await?;
+        self.replace_chat_widget_with_app_server_thread(
+            tui, app_server, started, /*initial_user_message*/ None,
+        )
+        .await?;
+        self.chat_widget.add_info_message(
+            "Conversation branched from the selected point.".to_string(),
+            /*hint*/ None,
+        );
         self.clear_pending_transcript_reply();
         Ok(self.chat_widget.thread_id().unwrap_or(thread_id))
+    }
+
+    fn handle_pending_transcript_reply_fork_failure(
+        &mut self,
+        tui: &mut tui::Tui,
+        op: &AppCommand,
+        err: &color_eyre::Report,
+    ) {
+        tracing::error!("failed to fork pending transcript reply: {err}");
+        if let Some(user_message) = user_message_from_user_turn_op(op) {
+            self.chat_widget
+                .restore_user_message_to_composer(user_message);
+        }
+        self.chat_widget
+            .add_error_message(Self::pending_transcript_reply_fork_error_message(err));
+        tui.frame_requester().schedule_frame();
+    }
+
+    fn pending_transcript_reply_fork_error_message(err: &color_eyre::Report) -> String {
+        if err.chain().any(|cause| {
+            let message = cause.to_string();
+            message.contains("no rollout found for thread id")
+                || message.contains("includeTurns is unavailable before first user message")
+        }) {
+            "Could not create the branch because the current conversation is not available for forking yet. Your reply was not sent, and any draft text was restored to the composer.".to_string()
+        } else {
+            let details = err
+                .chain()
+                .skip(1)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(": ");
+            let details = if details.is_empty() {
+                err.to_string()
+            } else {
+                format!("{err}: {details}")
+            };
+            format!(
+                "Failed to create branch: {details}. Your reply was not sent, and any draft text was restored to the composer."
+            )
+        }
     }
 
     fn reset_external_editor_state(&mut self, tui: &mut tui::Tui) {
@@ -6749,6 +7023,11 @@ impl App {
         }
         if side_return_shortcut_matches(key_event)
             && self.maybe_return_from_side(tui, app_server).await
+        {
+            return;
+        }
+        if side_return_shortcut_matches(key_event)
+            && self.maybe_return_from_branch(tui, app_server).await
         {
             return;
         }
@@ -6872,7 +7151,7 @@ impl App {
 
     #[cfg(test)]
     fn pending_transcript_reply(&self) -> Option<PendingTranscriptReply> {
-        self.pending_transcript_reply
+        self.pending_transcript_reply.clone()
     }
 
     #[cfg(target_os = "windows")]
@@ -7124,6 +7403,56 @@ fn build_feedback_upload_params(
         extra_log_files,
         tags,
     }
+}
+
+fn branch_created_notice(anchor_summary: Option<&str>) -> String {
+    match anchor_summary {
+        Some(anchor_summary) if !anchor_summary.trim().is_empty() => {
+            format!(
+                "Conversation branched from \"...{}\".",
+                anchor_summary.trim()
+            )
+        }
+        _ => "Conversation branched from the selected point.".to_string(),
+    }
+}
+
+fn user_message_from_user_turn_op(op: &AppCommand) -> Option<crate::chatwidget::UserMessage> {
+    let AppCommandView::UserTurn { items, .. } = op.view() else {
+        return None;
+    };
+
+    let mut text = String::new();
+    let mut text_elements = Vec::new();
+    let mut local_image_paths = Vec::new();
+    for item in items {
+        match item {
+            UserInput::Text {
+                text: segment,
+                text_elements: segment_elements,
+            } => {
+                let is_first_text_segment = text.is_empty();
+                if !is_first_text_segment {
+                    text.push('\n');
+                }
+                if is_first_text_segment {
+                    text_elements = segment_elements.clone();
+                }
+                text.push_str(segment);
+            }
+            UserInput::LocalImage { path } => {
+                local_image_paths.push(path.clone());
+            }
+            UserInput::Image { .. } | UserInput::Skill { .. } | UserInput::Mention { .. } => {}
+            _ => {}
+        }
+    }
+
+    crate::chatwidget::create_initial_user_message(
+        (!text.is_empty()).then_some(text),
+        local_image_paths,
+        text_elements,
+    )
 }
 
 async fn fetch_feedback_upload(
@@ -10064,6 +10393,8 @@ guardian_approval = true
                 thread: Thread {
                     id: agent_thread_id.to_string(),
                     forked_from_id: None,
+                    branch_depth: None,
+                    branch_anchor_summary: None,
                     preview: "agent thread".to_string(),
                     ephemeral: false,
                     model_provider: "agent-provider".to_string(),
@@ -10145,6 +10476,8 @@ guardian_approval = true
                 thread: Thread {
                     id: agent_thread_id.to_string(),
                     forked_from_id: None,
+                    branch_depth: None,
+                    branch_anchor_summary: None,
                     preview: "agent thread".to_string(),
                     ephemeral: false,
                     model_provider: "agent-provider".to_string(),
@@ -10505,6 +10838,28 @@ guardian_approval = true
         assert_eq!(
             App::side_start_error_message(&err),
             "Failed to start side conversation: transport disconnected"
+        );
+    }
+
+    #[test]
+    fn pending_transcript_reply_fork_error_message_explains_missing_rollout() {
+        let err = color_eyre::eyre::eyre!(
+            "thread/fork failed during TUI bootstrap: thread/fork failed: no rollout found for thread id 019da1a1-bed9-7a43-88a2-b49d43915021"
+        );
+
+        assert_eq!(
+            App::pending_transcript_reply_fork_error_message(&err),
+            "Could not create the branch because the current conversation is not available for forking yet. Your reply was not sent, and any draft text was restored to the composer."
+        );
+    }
+
+    #[test]
+    fn pending_transcript_reply_fork_error_message_uses_generic_wording() {
+        let err = color_eyre::eyre::eyre!("transport disconnected");
+
+        assert_eq!(
+            App::pending_transcript_reply_fork_error_message(&err),
+            "Failed to create branch: transport disconnected. Your reply was not sent, and any draft text was restored to the composer."
         );
     }
 
@@ -11115,6 +11470,8 @@ guardian_approval = true
         ThreadSessionState {
             thread_id,
             forked_from_id: None,
+            branch_depth: None,
+            branch_anchor_summary: None,
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
@@ -12670,6 +13027,8 @@ guardian_approval = true
                 source_line_index: 0,
                 source_byte_offset: 4,
             },
+            fork_anchor: None,
+            anchor_summary: None,
             current_index: 1,
             total: 2,
         });
@@ -12681,7 +13040,12 @@ guardian_approval = true
                     source_line_index: 0,
                     source_byte_offset: 4,
                 },
-                assistant_message_index: 0,
+                fork_snapshot: codex_app_server_protocol::ThreadForkSnapshot::AssistantReadAnchor {
+                    assistant_message_index: 0,
+                    source_line_index: 0,
+                    source_byte_offset: 4,
+                },
+                anchor_summary: None,
                 current_index: 1,
                 total: 2,
             })
@@ -12713,6 +13077,8 @@ guardian_approval = true
                 thread: Thread {
                     id: thread_id.to_string(),
                     forked_from_id: None,
+                    branch_depth: None,
+                    branch_anchor_summary: None,
                     preview: String::new(),
                     ephemeral: false,
                     model_provider: "openai".to_string(),

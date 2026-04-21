@@ -344,11 +344,42 @@ Rationale:
 - The branch point is line-addressable in the transcript itself.
 - This avoids forcing the user into a separate "inspect mode" before branching.
 
+### Copied-snippet branch command
+
+Main-mode history is terminal scrollback, not a Codex-owned viewport. When the
+user scrolls up in the terminal, Codex cannot reliably know which row the user
+is viewing or where a visual cursor should be anchored.
+
+For a low-risk prototype that fits the current architecture, support:
+
+- user scrolls normally in the terminal
+- user copies a sufficiently specific block of assistant text with the OS or
+  terminal selection
+- user runs `/branch <copied assistant text>`
+- Codex searches the latest assistant response for that text
+- Codex maps the match to a semantic endpoint, starting with the containing
+  paragraph or list item
+- Codex immediately creates and switches into a persistent child branch rooted
+  at that anchor, excluding unread assistant content after the anchor
+- the composer is empty in the branch, and the user's next message submits
+  normally into that child thread
+- while the branch is active, the footer shows a dedicated `branch depth <n>:
+  "...<anchor tail>"` row plus an `Esc to return` hint
+- the branch depth and anchor tail are persisted as thread metadata so the
+  indicator can be reconstructed after `codex resume <branch-thread-id>`
+
+This prototype does not require Codex to own normal scrollback and does not
+own the visible terminal scrollback. It gives users a way to branch from the
+content they were already reading while preserving the server-side branch
+semantics and matching the existing `/side` habit of switching into a related
+child thread before the user types the follow-up.
+
 ### Branch-depth indicator
 
 Start with:
 
-- a breadcrumb/header showing the current branch path or depth
+- a compact dedicated footer row showing the current branch depth and the last few
+  words at the branch anchor
 - compact local branch markers in the transcript at branch lines
 
 Do not start with:
@@ -631,15 +662,20 @@ assuming specific keys.
 
 #### Persistence
 
-Persist saved read positions per thread/message in TUI session state first.
+Persist branch context on the forked thread:
 
-Open follow-up:
+- `forked_from_id` preserves the parent thread id
+- `branch_depth` preserves the current nesting depth
+- `branch_anchor_summary` preserves the short footer label for the selected
+  anchor
 
-- whether read positions should also survive full app restart via the thread
-  state db or another persisted store
+Saved read positions that do not create a branch are still a follow-up. They may
+remain TUI-local until the product needs restart-stable reading progress without
+branch creation.
 
-For the first implementation, in-memory session persistence is sufficient if it
-reduces risk.
+The persisted branch context is UI/session metadata only. It should not add the
+unread suffix back into model context and should not inject synthetic messages
+into the conversation.
 
 ### Phase 2 engineering slice: true branch creation and context truncation
 
@@ -680,7 +716,8 @@ The wire payload should communicate:
 - truncate that message to the selected anchor
 - discard later items/turns beyond the branch point
 - materialize the new forked thread from the truncated history
-- preserve branch provenance metadata on the new thread
+- preserve branch provenance metadata on the new thread, including the parent id,
+  branch depth, and short anchor summary used by the TUI footer
 
 This likely requires a reusable rollout/turn-history truncation helper rather
 than embedding branch logic directly inside `thread_fork`.
@@ -692,7 +729,7 @@ Recommended extraction:
 
 #### Context construction
 
-When a user submits into the branch:
+When a user submits inside the already-created branch:
 
 - the app-server should already consider the thread's copied history truncated
   at the branch point

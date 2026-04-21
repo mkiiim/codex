@@ -45,6 +45,7 @@ async fn write_rollout_with_user_event(dir: &Path, thread_id: ThreadId) -> io::R
         meta: SessionMeta {
             id: thread_id,
             forked_from_id: None,
+            branch_context: None,
             timestamp: TEST_TIMESTAMP.to_string(),
             cwd: std::path::PathBuf::from("."),
             originator: "test_originator".to_string(),

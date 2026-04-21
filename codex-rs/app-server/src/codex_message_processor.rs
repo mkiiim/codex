@@ -304,6 +304,7 @@ use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentStatus;
+use codex_protocol::protocol::BranchContext;
 use codex_protocol::protocol::ConversationAudioParams;
 use codex_protocol::protocol::ConversationStartParams;
 use codex_protocol::protocol::ConversationStartTransport;
@@ -320,6 +321,7 @@ use codex_protocol::protocol::ReviewDelivery as CoreReviewDelivery;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::ReviewTarget as CoreReviewTarget;
 use codex_protocol::protocol::RolloutItem;
+use codex_protocol::protocol::RolloutLine;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::USER_MESSAGE_BEGIN;
@@ -3980,6 +3982,9 @@ impl CodexMessageProcessor {
         {
             thread.forked_from_id = forked_from_id_from_rollout(rollout_path).await;
         }
+        if let Some(rollout_path) = rollout_path {
+            apply_branch_context_from_rollout(thread, rollout_path).await;
+        }
         self.attach_thread_name(thread_id, thread).await;
 
         if include_turns && let Some(rollout_path) = rollout_path {
@@ -4785,6 +4790,8 @@ impl CodexMessageProcessor {
             thread_id,
             path,
             snapshot,
+            branch_depth,
+            branch_anchor_summary,
             model,
             model_provider,
             service_tier,
@@ -4798,6 +4805,10 @@ impl CodexMessageProcessor {
             ephemeral,
             persist_extended_history,
         } = params;
+        let branch_context = branch_depth.map(|depth| BranchContext {
+            depth,
+            anchor_summary: branch_anchor_summary,
+        });
 
         let snapshot = match snapshot.unwrap_or(ApiThreadForkSnapshot::Interrupted) {
             ApiThreadForkSnapshot::Interrupted => ForkSnapshot::Interrupted,
@@ -4808,6 +4819,13 @@ impl CodexMessageProcessor {
             } => ForkSnapshot::AssistantReadAnchor {
                 assistant_message_index: usize::try_from(assistant_message_index)
                     .unwrap_or(usize::MAX),
+                source_line_index: usize::try_from(source_line_index).unwrap_or(usize::MAX),
+                source_byte_offset: usize::try_from(source_byte_offset).unwrap_or(usize::MAX),
+            },
+            ApiThreadForkSnapshot::LatestAssistantReadAnchor {
+                source_line_index,
+                source_byte_offset,
+            } => ForkSnapshot::LatestAssistantReadAnchor {
                 source_line_index: usize::try_from(source_line_index).unwrap_or(usize::MAX),
                 source_byte_offset: usize::try_from(source_byte_offset).unwrap_or(usize::MAX),
             },
@@ -4978,6 +4996,18 @@ impl CodexMessageProcessor {
         // Persistent forks materialize their own rollout immediately. Ephemeral forks stay
         // pathless, so they rebuild their visible history from the copied source rollout instead.
         let mut thread = if let Some(fork_rollout_path) = session_configured.rollout_path.as_ref() {
+            if let Some(branch_context) = branch_context.as_ref()
+                && let Err(err) =
+                    write_branch_context_to_rollout(fork_rollout_path.as_path(), branch_context)
+                        .await
+            {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to persist branch metadata for thread {thread_id}: {err}"),
+                )
+                .await;
+                return;
+            }
             match read_summary_from_rollout(
                 fork_rollout_path.as_path(),
                 fallback_model_provider.as_str(),
@@ -4988,6 +5018,8 @@ impl CodexMessageProcessor {
                     let mut thread = summary_to_thread(summary, &self.config.cwd);
                     thread.forked_from_id =
                         forked_from_id_from_rollout(fork_rollout_path.as_path()).await;
+                    apply_branch_context_from_rollout(&mut thread, fork_rollout_path.as_path())
+                        .await;
                     thread
                 }
                 Err(err) => {
@@ -5031,6 +5063,10 @@ impl CodexMessageProcessor {
                     })
                 })
                 .map(|id| id.to_string());
+            if let Some(branch_context) = branch_context.as_ref() {
+                thread.branch_depth = Some(branch_context.depth);
+                thread.branch_anchor_summary = branch_context.anchor_summary.clone();
+            }
             if let Err(message) = populate_thread_turns(
                 &mut thread,
                 ThreadTurnSource::HistoryItems(&history_items),
@@ -9594,6 +9630,8 @@ fn thread_from_stored_thread(
     let thread = Thread {
         id: thread.thread_id.to_string(),
         forked_from_id: thread.forked_from_id.map(|id| id.to_string()),
+        branch_depth: None,
+        branch_anchor_summary: None,
         preview: thread.first_user_message.unwrap_or(thread.preview),
         ephemeral: false,
         model_provider: if thread.model_provider.is_empty() {
@@ -9902,6 +9940,7 @@ async fn load_thread_summary_for_rollout(
             )
         })?;
     thread.forked_from_id = forked_from_id_from_rollout(rollout_path).await;
+    apply_branch_context_from_rollout(&mut thread, rollout_path).await;
     if let Some(persisted_metadata) = persisted_metadata {
         merge_mutable_thread_metadata(
             &mut thread,
@@ -9930,6 +9969,43 @@ async fn forked_from_id_from_rollout(path: &Path) -> Option<String> {
         .ok()
         .and_then(|meta_line| meta_line.meta.forked_from_id)
         .map(|thread_id| thread_id.to_string())
+}
+
+async fn branch_context_from_rollout(path: &Path) -> Option<BranchContext> {
+    read_session_meta_line(path)
+        .await
+        .ok()
+        .and_then(|meta_line| meta_line.meta.branch_context)
+}
+
+async fn apply_branch_context_from_rollout(thread: &mut Thread, path: &Path) {
+    if let Some(branch_context) = branch_context_from_rollout(path).await {
+        thread.branch_depth = Some(branch_context.depth);
+        thread.branch_anchor_summary = branch_context.anchor_summary;
+    }
+}
+
+async fn write_branch_context_to_rollout(
+    path: &Path,
+    branch_context: &BranchContext,
+) -> std::io::Result<()> {
+    let content = tokio::fs::read_to_string(path).await?;
+    let (first_line, rest) = content
+        .split_once('\n')
+        .map_or((content.as_str(), ""), |(first, rest)| (first, rest));
+    let mut rollout_line: RolloutLine = serde_json::from_str(first_line).map_err(IoError::other)?;
+    let RolloutItem::SessionMeta(meta_line) = &mut rollout_line.item else {
+        return Err(IoError::other(format!(
+            "rollout at {} does not start with session metadata",
+            path.display()
+        )));
+    };
+
+    meta_line.meta.branch_context = Some(branch_context.clone());
+    let mut updated = serde_json::to_string(&rollout_line).map_err(IoError::other)?;
+    updated.push('\n');
+    updated.push_str(rest);
+    tokio::fs::write(path, updated).await
 }
 
 fn merge_mutable_thread_metadata(thread: &mut Thread, persisted_thread: Thread) {
@@ -10013,6 +10089,8 @@ fn build_thread_from_snapshot(
     Thread {
         id: thread_id.to_string(),
         forked_from_id: None,
+        branch_depth: None,
+        branch_anchor_summary: None,
         preview: String::new(),
         ephemeral: config_snapshot.ephemeral,
         model_provider: config_snapshot.model_provider_id.clone(),
@@ -10068,6 +10146,8 @@ pub(crate) fn summary_to_thread(
     Thread {
         id: conversation_id.to_string(),
         forked_from_id: None,
+        branch_depth: None,
+        branch_anchor_summary: None,
         preview,
         ephemeral: false,
         model_provider,

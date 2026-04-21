@@ -157,6 +157,7 @@ use super::footer::CollaborationModeIndicator;
 use super::footer::FooterMode;
 use super::footer::FooterProps;
 use super::footer::SummaryLeft;
+use super::footer::branch_context_line;
 use super::footer::can_show_left_with_context;
 use super::footer::context_window_line;
 use super::footer::esc_hint_mode;
@@ -377,6 +378,7 @@ pub(crate) struct ChatComposer {
     status_line_value: Option<Line<'static>>,
     status_line_enabled: bool,
     side_conversation_context_label: Option<String>,
+    branch_context_label: Option<String>,
     // Agent label injected into the footer's contextual row when multi-agent mode is active.
     active_agent_label: Option<String>,
     history_search: Option<HistorySearchSession>,
@@ -524,6 +526,7 @@ impl ChatComposer {
             status_line_value: None,
             status_line_enabled: false,
             side_conversation_context_label: None,
+            branch_context_label: None,
             active_agent_label: None,
             history_search: None,
         };
@@ -3089,6 +3092,7 @@ impl ChatComposer {
             status_line_value: self.status_line_value.clone(),
             status_line_enabled: self.status_line_enabled,
             active_agent_label: self.active_agent_label.clone(),
+            branch_context_label: self.branch_context_label.clone(),
         }
     }
 
@@ -3628,6 +3632,14 @@ impl ChatComposer {
         true
     }
 
+    pub(crate) fn set_branch_context_label(&mut self, label: Option<String>) -> bool {
+        if self.branch_context_label == label {
+            return false;
+        }
+        self.branch_context_label = label;
+        true
+    }
+
     /// Replaces the contextual footer label for the currently viewed agent.
     ///
     /// Returning `false` means the value was unchanged, so callers can skip redraw work. This
@@ -3813,14 +3825,29 @@ impl ChatComposer {
                 } else {
                     popup_rect
                 };
+                let footer_rect = if let Some(line) = branch_context_line(&footer_props)
+                    && hint_rect.height > 0
+                {
+                    let [branch_rect, footer_rect] =
+                        Layout::vertical([Constraint::Length(1), Constraint::Min(0)])
+                            .areas(hint_rect);
+                    render_footer_line(branch_rect, buf, line);
+                    footer_rect
+                } else {
+                    hint_rect
+                };
+                let footer_body_props = FooterProps {
+                    branch_context_label: None,
+                    ..footer_props.clone()
+                };
                 if let Some(line) = self.history_search_footer_line() {
-                    render_footer_line(hint_rect, buf, line);
+                    render_footer_line(footer_rect, buf, line);
                 } else {
                     let available_width =
-                        hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16) as usize;
-                    let status_line_active = uses_passive_footer_status_layout(&footer_props);
+                        footer_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16) as usize;
+                    let status_line_active = uses_passive_footer_status_layout(&footer_body_props);
                     let combined_status_line = if status_line_active {
-                        passive_footer_status_line(&footer_props)
+                        passive_footer_status_line(&footer_body_props)
                             .map(ratatui::prelude::Stylize::dim)
                     } else {
                         None
@@ -3852,7 +3879,7 @@ impl ChatComposer {
                             .unwrap_or(0)
                     } else {
                         footer_line_width(
-                            &footer_props,
+                            &footer_body_props,
                             left_mode_indicator,
                             show_cycle_hint,
                             show_shortcuts_hint,
@@ -3871,20 +3898,20 @@ impl ChatComposer {
                             /*show_cycle_hint*/ false,
                         );
                         let full_width = full.as_ref().map(|l| l.width() as u16).unwrap_or(0);
-                        if can_show_left_with_context(hint_rect, left_width, full_width) {
+                        if can_show_left_with_context(footer_rect, left_width, full_width) {
                             full
                         } else {
                             compact
                         }
                     } else {
                         Some(context_window_line(
-                            footer_props.context_window_percent,
-                            footer_props.context_window_used_tokens,
+                            footer_body_props.context_window_percent,
+                            footer_body_props.context_window_used_tokens,
                         ))
                     };
                     let right_width = right_line.as_ref().map(|l| l.width() as u16).unwrap_or(0);
                     if status_line_active
-                        && let Some(max_left) = max_left_width_for_right(hint_rect, right_width)
+                        && let Some(max_left) = max_left_width_for_right(footer_rect, right_width)
                         && left_width > max_left
                         && let Some(line) = combined_status_line.as_ref().map(|line| {
                             truncate_line_with_ellipsis_if_overflow(line.clone(), max_left as usize)
@@ -3894,7 +3921,7 @@ impl ChatComposer {
                         truncated_status_line = Some(line);
                     }
                     let can_show_left_and_context =
-                        can_show_left_with_context(hint_rect, left_width, right_width);
+                        can_show_left_with_context(footer_rect, left_width, right_width);
                     let has_override =
                         self.footer_flash_visible() || active_footer_hint_override.is_some();
                     let single_line_layout = if has_override || status_line_active {
@@ -3907,7 +3934,7 @@ impl ChatComposer {
                                 // want the single-line collapse rules so the mode label can win over
                                 // the context indicator on narrow widths.
                                 Some(single_line_footer_layout(
-                                    hint_rect,
+                                    footer_rect,
                                     right_width,
                                     left_mode_indicator,
                                     show_cycle_hint,
@@ -3941,12 +3968,12 @@ impl ChatComposer {
                             SummaryLeft::Default => {
                                 if status_line_active {
                                     if let Some(line) = truncated_status_line.clone() {
-                                        render_footer_line(hint_rect, buf, line);
+                                        render_footer_line(footer_rect, buf, line);
                                     } else {
                                         render_footer_from_props(
-                                            hint_rect,
+                                            footer_rect,
                                             buf,
-                                            &footer_props,
+                                            &footer_body_props,
                                             left_mode_indicator,
                                             show_cycle_hint,
                                             show_shortcuts_hint,
@@ -3955,9 +3982,9 @@ impl ChatComposer {
                                     }
                                 } else {
                                     render_footer_from_props(
-                                        hint_rect,
+                                        footer_rect,
                                         buf,
-                                        &footer_props,
+                                        &footer_body_props,
                                         left_mode_indicator,
                                         show_cycle_hint,
                                         show_shortcuts_hint,
@@ -3966,25 +3993,25 @@ impl ChatComposer {
                                 }
                             }
                             SummaryLeft::Custom(line) => {
-                                render_footer_line(hint_rect, buf, line);
+                                render_footer_line(footer_rect, buf, line);
                             }
                             SummaryLeft::None => {}
                         }
                     } else if self.footer_flash_visible() {
                         if let Some(flash) = self.footer_flash.as_ref() {
-                            flash.line.render(inset_footer_hint_area(hint_rect), buf);
+                            flash.line.render(inset_footer_hint_area(footer_rect), buf);
                         }
                     } else if let Some(items) = active_footer_hint_override {
-                        render_footer_hint_items(hint_rect, buf, items);
+                        render_footer_hint_items(footer_rect, buf, items);
                     } else if status_line_active {
                         if let Some(line) = truncated_status_line {
-                            render_footer_line(hint_rect, buf, line);
+                            render_footer_line(footer_rect, buf, line);
                         }
                     } else {
                         render_footer_from_props(
-                            hint_rect,
+                            footer_rect,
                             buf,
-                            &footer_props,
+                            &footer_body_props,
                             self.collaboration_mode_indicator,
                             show_cycle_hint,
                             show_shortcuts_hint,
@@ -3992,7 +4019,7 @@ impl ChatComposer {
                         );
                     }
                     if show_right && let Some(line) = &right_line {
-                        render_context_right(hint_rect, buf, line);
+                        render_context_right(footer_rect, buf, line);
                     }
                 }
             }

@@ -494,6 +494,7 @@ impl RolloutRecorder {
                     let session_meta = SessionMeta {
                         id: session_id,
                         forked_from_id,
+                        branch_context: None,
                         timestamp,
                         cwd: config.cwd().to_path_buf(),
                         originator: originator().value,

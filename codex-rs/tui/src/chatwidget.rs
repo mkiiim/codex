@@ -885,6 +885,8 @@ pub(crate) struct ChatWidget {
     normal_placeholder_text: String,
     side_placeholder_text: String,
     forked_from: Option<ThreadId>,
+    branch_depth: usize,
+    branch_anchor_summary: Option<String>,
     interrupted_turn_notice_mode: InterruptedTurnNoticeMode,
     frame_requester: FrameRequester,
     // Whether to include the initial welcome banner on session configured
@@ -1921,6 +1923,66 @@ impl ChatWidget {
         self.bottom_pane.set_active_agent_label(active_agent_label);
     }
 
+    pub(crate) fn branch_depth(&self) -> usize {
+        self.branch_depth
+    }
+
+    pub(crate) fn branch_parent_thread_id(&self) -> Option<ThreadId> {
+        (self.branch_depth > 0)
+            .then_some(self.forked_from)
+            .flatten()
+    }
+
+    pub(crate) fn set_branch_context(
+        &mut self,
+        branch_depth: usize,
+        anchor_summary: Option<String>,
+    ) {
+        self.branch_depth = branch_depth;
+        self.branch_anchor_summary = anchor_summary;
+        self.refresh_branch_context_label();
+    }
+
+    fn apply_branch_context_from_session(
+        &mut self,
+        branch_depth: Option<u32>,
+        anchor_summary: Option<String>,
+    ) {
+        match branch_depth {
+            Some(branch_depth) if branch_depth > 0 => {
+                self.set_branch_context(
+                    usize::try_from(branch_depth).unwrap_or(usize::MAX),
+                    anchor_summary,
+                );
+            }
+            _ => {
+                self.set_branch_context(/*branch_depth*/ 0, /*anchor_summary*/ None);
+            }
+        }
+    }
+
+    fn sync_branch_context_for_session(&mut self) {
+        if self.forked_from.is_none() {
+            self.branch_depth = 0;
+            self.branch_anchor_summary = None;
+        }
+        self.refresh_branch_context_label();
+    }
+
+    fn refresh_branch_context_label(&mut self) {
+        let label = (self.branch_depth > 0).then(|| {
+            if let Some(anchor_summary) = self.branch_anchor_summary.as_deref() {
+                format!(
+                    "branch depth {}: \"...{}\" · Esc to return",
+                    self.branch_depth, anchor_summary
+                )
+            } else {
+                format!("branch depth {} · Esc to return", self.branch_depth)
+            }
+        });
+        self.bottom_pane.set_branch_context_label(label);
+    }
+
     /// Recomputes footer status-line content from config and current runtime state.
     ///
     /// This method is the status-line orchestrator: it parses configured item identifiers,
@@ -2069,6 +2131,7 @@ impl ChatWidget {
         self.last_turn_id = None;
         self.thread_name = event.thread_name.clone();
         self.forked_from = event.forked_from_id;
+        self.sync_branch_context_for_session();
         self.current_rollout_path = event.rollout_path.clone();
         self.current_cwd = Some(event.cwd.to_path_buf());
         self.config.cwd = event.cwd.clone();
@@ -2174,24 +2237,33 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_thread_session(&mut self, session: ThreadSessionState) {
+        let branch_depth = session.branch_depth;
+        let branch_anchor_summary = session.branch_anchor_summary.clone();
         self.instruction_source_paths = session.instruction_source_paths.clone();
         self.on_session_configured(thread_session_state_to_legacy_event(session));
+        self.apply_branch_context_from_session(branch_depth, branch_anchor_summary);
     }
 
     pub(crate) fn handle_thread_session_quiet(&mut self, session: ThreadSessionState) {
+        let branch_depth = session.branch_depth;
+        let branch_anchor_summary = session.branch_anchor_summary.clone();
         self.instruction_source_paths = session.instruction_source_paths.clone();
         self.on_session_configured_with_display(
             thread_session_state_to_legacy_event(session),
             SessionConfiguredDisplay::Quiet,
         );
+        self.apply_branch_context_from_session(branch_depth, branch_anchor_summary);
     }
 
     pub(crate) fn handle_side_thread_session(&mut self, session: ThreadSessionState) {
+        let branch_depth = session.branch_depth;
+        let branch_anchor_summary = session.branch_anchor_summary.clone();
         self.instruction_source_paths = session.instruction_source_paths.clone();
         self.on_session_configured_with_display(
             thread_session_state_to_legacy_event(session),
             SessionConfiguredDisplay::SideConversation,
         );
+        self.apply_branch_context_from_session(branch_depth, branch_anchor_summary);
     }
 
     fn emit_forked_thread_event(&mut self, forked_from_id: ThreadId) {
@@ -5098,6 +5170,8 @@ impl ChatWidget {
             normal_placeholder_text: placeholder,
             side_placeholder_text: side_placeholder,
             forked_from: None,
+            branch_depth: 0,
+            branch_anchor_summary: None,
             interrupted_turn_notice_mode: InterruptedTurnNoticeMode::Default,
             queued_user_messages: VecDeque::new(),
             user_turn_pending_start: false,
@@ -5457,7 +5531,6 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    #[cfg(test)]
     pub(crate) fn last_agent_markdown_text(&self) -> Option<&str> {
         self.last_agent_markdown.as_deref()
     }
@@ -6964,6 +7037,14 @@ impl ChatWidget {
             EventMsg::TurnAborted(ev) => match ev.reason {
                 TurnAbortReason::Interrupted => {
                     self.on_interrupted_turn(ev.reason);
+                }
+                TurnAbortReason::Branched => {
+                    self.finalize_turn();
+                    self.add_to_history(history_cell::new_info_event(
+                        "Conversation branched from the selected point.".to_owned(),
+                        /*hint*/ None,
+                    ));
+                    self.request_redraw();
                 }
                 TurnAbortReason::Replaced => {
                     self.submit_pending_steers_after_interrupt = false;

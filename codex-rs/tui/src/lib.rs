@@ -104,6 +104,7 @@ mod audio_device {
     }
 }
 mod bottom_pane;
+mod branch_locator;
 mod chatwidget;
 mod cli;
 mod clipboard_copy;

@@ -2788,6 +2788,14 @@ pub struct SessionStateUpdate {
     pub agent_task: Option<SessionAgentTask>,
 }
 
+/// UI-visible metadata describing where a conversational branch was created.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+pub struct BranchContext {
+    pub depth: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_summary: Option<String>,
+}
+
 /// SessionMeta contains session-level data that doesn't correspond to a specific turn.
 ///
 /// NOTE: There used to be an `instructions` field here, which stored user_instructions, but we
@@ -2798,6 +2806,8 @@ pub struct SessionMeta {
     pub id: ThreadId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forked_from_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_context: Option<BranchContext>,
     pub timestamp: String,
     pub cwd: PathBuf,
     pub originator: String,
@@ -2829,6 +2839,7 @@ impl Default for SessionMeta {
         SessionMeta {
             id: ThreadId::default(),
             forked_from_id: None,
+            branch_context: None,
             timestamp: String::new(),
             cwd: PathBuf::new(),
             originator: String::new(),
@@ -3698,6 +3709,7 @@ pub struct TurnAbortedEvent {
 #[serde(rename_all = "snake_case")]
 pub enum TurnAbortReason {
     Interrupted,
+    Branched,
     Replaced,
     ReviewEnded,
 }

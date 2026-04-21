@@ -28,6 +28,7 @@ pub enum SlashCommand {
     New,
     Resume,
     Fork,
+    Branch,
     Init,
     Compact,
     Plan,
@@ -81,6 +82,7 @@ impl SlashCommand {
             SlashCommand::Resume => "resume a saved chat",
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
+            SlashCommand::Branch => "reply from a copied point in the latest assistant response",
             // SlashCommand::Undo => "ask Codex to undo a turn",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
@@ -139,6 +141,7 @@ impl SlashCommand {
                 | SlashCommand::Plan
                 | SlashCommand::Fast
                 | SlashCommand::Mcp
+                | SlashCommand::Branch
                 | SlashCommand::Side
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
@@ -159,6 +162,7 @@ impl SlashCommand {
             SlashCommand::New
             | SlashCommand::Resume
             | SlashCommand::Fork
+            | SlashCommand::Branch
             | SlashCommand::Init
             | SlashCommand::Compact
             // | SlashCommand::Undo
@@ -238,5 +242,11 @@ mod tests {
     #[test]
     fn clean_alias_parses_to_stop_command() {
         assert_eq!(SlashCommand::from_str("clean"), Ok(SlashCommand::Stop));
+    }
+
+    #[test]
+    fn branch_command_requires_inline_args_and_waits_for_idle_task() {
+        assert!(SlashCommand::Branch.supports_inline_args());
+        assert!(!SlashCommand::Branch.available_during_task());
     }
 }

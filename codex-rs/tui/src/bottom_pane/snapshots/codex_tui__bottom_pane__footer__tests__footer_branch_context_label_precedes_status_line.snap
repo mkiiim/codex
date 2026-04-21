@@ -1,0 +1,7 @@
+---
+source: tui/src/bottom_pane/footer.rs
+assertion_line: 1317
+expression: terminal.backend()
+---
+"  branch depth 1                                                                "
+"  gpt-5.4 medium · Context 92% left · /Volumes/Orico Samsung 970 EVO Plus       "

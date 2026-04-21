@@ -1790,6 +1790,22 @@ pub(crate) async fn apply_bespoke_event_handling(
         }
         // If this is a TurnAborted, reply to any pending interrupt requests.
         EventMsg::TurnAborted(turn_aborted_event) => {
+            if turn_aborted_event.reason == codex_protocol::protocol::TurnAbortReason::Branched {
+                thread_watch_manager
+                    .note_turn_completed(&conversation_id.to_string(), /*failed*/ false)
+                    .await;
+                handle_turn_branched(
+                    conversation_id,
+                    event_turn_id,
+                    turn_aborted_event,
+                    analytics_events_client.as_ref(),
+                    &outgoing,
+                    &thread_state,
+                )
+                .await;
+                return;
+            }
+
             // All per-thread requests are bound to a turn, so abort them.
             outgoing.abort_pending_server_requests().await;
             let pending = {
@@ -2255,6 +2271,32 @@ async fn handle_turn_interrupted(
         event_turn_id,
         TurnCompletionMetadata {
             status: TurnStatus::Interrupted,
+            error: None,
+            started_at: turn_summary.started_at,
+            completed_at: turn_aborted_event.completed_at,
+            duration_ms: turn_aborted_event.duration_ms,
+        },
+        analytics_events_client,
+        outgoing,
+    )
+    .await;
+}
+
+async fn handle_turn_branched(
+    conversation_id: ThreadId,
+    event_turn_id: String,
+    turn_aborted_event: TurnAbortedEvent,
+    analytics_events_client: Option<&AnalyticsEventsClient>,
+    outgoing: &ThreadScopedOutgoingMessageSender,
+    thread_state: &Arc<Mutex<ThreadState>>,
+) {
+    let turn_summary = find_and_remove_turn_summary(conversation_id, thread_state).await;
+
+    emit_turn_completed_with_status(
+        conversation_id,
+        event_turn_id,
+        TurnCompletionMetadata {
+            status: TurnStatus::Completed,
             error: None,
             started_at: turn_summary.started_at,
             completed_at: turn_aborted_event.completed_at,

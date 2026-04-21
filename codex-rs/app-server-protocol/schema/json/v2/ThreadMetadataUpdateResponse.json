@@ -788,6 +788,22 @@
             "null"
           ]
         },
+        "branchAnchorSummary": {
+          "description": "Short UI label for the branch anchor, usually the final few words at the read point.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branchDepth": {
+          "description": "UI branch depth when this thread is part of a conversational branch.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "cliVersion": {
           "description": "Version of the CLI that created the thread.",
           "type": "string"

@@ -56,8 +56,23 @@ pub(crate) struct TranscriptReadPosition {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TranscriptForkAnchor {
+    Indexed {
+        assistant_message_index: usize,
+        source_line_index: usize,
+        source_byte_offset: usize,
+    },
+    LatestAssistant {
+        source_line_index: usize,
+        source_byte_offset: usize,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TranscriptReplyTarget {
     pub(crate) read_position: TranscriptReadPosition,
+    pub(crate) fork_anchor: Option<TranscriptForkAnchor>,
+    pub(crate) anchor_summary: Option<String>,
     pub(crate) current_index: usize,
     pub(crate) total: usize,
 }
@@ -771,6 +786,8 @@ impl TranscriptOverlay {
         let current_index = self.current_assistant_position_index(width, &assistant_positions)?;
         Some(TranscriptReplyTarget {
             read_position,
+            fork_anchor: None,
+            anchor_summary: None,
             current_index: current_index + 1,
             total: assistant_positions.len(),
         })
@@ -1474,6 +1491,8 @@ mod tests {
                     source_line_index: 0,
                     source_byte_offset: 4,
                 },
+                fork_anchor: None,
+                anchor_summary: None,
                 current_index: 1,
                 total: 2,
             })

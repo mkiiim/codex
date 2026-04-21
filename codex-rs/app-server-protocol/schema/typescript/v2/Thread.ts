@@ -13,6 +13,14 @@ export type Thread = { id: string,
  */
 forkedFromId: string | null,
 /**
+ * UI branch depth when this thread is part of a conversational branch.
+ */
+branchDepth: number | null,
+/**
+ * Short UI label for the branch anchor, usually the final few words at the read point.
+ */
+branchAnchorSummary: string | null,
+/**
  * Usually the first user message in the thread, if available.
  */
 preview: string,

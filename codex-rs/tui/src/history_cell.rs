@@ -541,7 +541,30 @@ impl AgentMessageCell {
             .collect()
     }
 
-    fn transcript_anchor_byte_offset(text: &str, range: &Range<usize>) -> Option<usize> {
+    pub(crate) fn source_lines_plain_text(&self) -> Vec<String> {
+        self.lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .collect()
+    }
+
+    pub(crate) fn source_line_end_anchor(&self, source_line_index: usize) -> Option<usize> {
+        let text = self
+            .lines
+            .get(source_line_index)?
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        Self::transcript_anchor_byte_offset(&text, &(0..text.len()))
+    }
+
+    pub(crate) fn transcript_anchor_byte_offset(text: &str, range: &Range<usize>) -> Option<usize> {
         let slice = &text[range.clone()];
         let end = slice
             .char_indices()

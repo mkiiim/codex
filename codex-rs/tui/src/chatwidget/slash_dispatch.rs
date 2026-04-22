@@ -144,6 +144,12 @@ impl ChatWidget {
             SlashCommand::Branch => {
                 self.add_error_message("Usage: /branch <copied assistant text>".to_string());
             }
+            SlashCommand::BranchInfo => {
+                self.app_event_tx.send(AppEvent::ShowBranchInfo);
+            }
+            SlashCommand::BranchList => {
+                self.app_event_tx.send(AppEvent::ShowBranchList);
+            }
             SlashCommand::Init => {
                 let init_target = self.config.cwd.join(DEFAULT_AGENTS_MD_FILENAME);
                 if init_target.exists() {
@@ -744,6 +750,8 @@ impl ChatWidget {
             | SlashCommand::Resume
             | SlashCommand::Fork
             | SlashCommand::Branch
+            | SlashCommand::BranchInfo
+            | SlashCommand::BranchList
             | SlashCommand::Init
             | SlashCommand::Compact
             | SlashCommand::Review

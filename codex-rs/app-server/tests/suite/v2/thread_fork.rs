@@ -213,7 +213,7 @@ async fn thread_fork_persists_branch_context_for_resume() -> Result<()> {
     let anchor_summary = "payment terms, and late-fee rules.".to_string();
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
-            thread_id: conversation_id,
+            thread_id: conversation_id.clone(),
             branch_depth: Some(2),
             branch_anchor_summary: Some(anchor_summary.clone()),
             ..Default::default()
@@ -228,6 +228,36 @@ async fn thread_fork_persists_branch_context_for_resume() -> Result<()> {
 
     assert_eq!(forked.branch_depth, Some(2));
     assert_eq!(forked.branch_anchor_summary, Some(anchor_summary.clone()));
+
+    let list_id = mcp
+        .send_thread_list_request(ThreadListParams {
+            cursor: None,
+            limit: Some(10),
+            sort_key: None,
+            sort_direction: None,
+            model_providers: None,
+            source_kinds: None,
+            archived: None,
+            cwd: None,
+            search_term: None,
+        })
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
+    )
+    .await??;
+    let ThreadListResponse { data, .. } = to_response::<ThreadListResponse>(list_resp)?;
+    let listed = data
+        .iter()
+        .find(|thread| thread.id == forked.id)
+        .expect("forked thread should appear in thread/list");
+    assert_eq!(listed.forked_from_id, Some(conversation_id.clone()));
+    assert_eq!(listed.branch_depth, Some(2));
+    assert_eq!(
+        listed.branch_anchor_summary.as_deref(),
+        Some(anchor_summary.as_str())
+    );
 
     let resume_id = mcp
         .send_thread_resume_request(ThreadResumeParams {

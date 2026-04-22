@@ -1927,6 +1927,10 @@ impl ChatWidget {
         self.branch_depth
     }
 
+    pub(crate) fn branch_anchor_summary(&self) -> Option<&str> {
+        self.branch_anchor_summary.as_deref()
+    }
+
     pub(crate) fn branch_parent_thread_id(&self) -> Option<ThreadId> {
         (self.branch_depth > 0)
             .then_some(self.forked_from)

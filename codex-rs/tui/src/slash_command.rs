@@ -29,6 +29,8 @@ pub enum SlashCommand {
     Resume,
     Fork,
     Branch,
+    BranchInfo,
+    BranchList,
     Init,
     Compact,
     Plan,
@@ -83,6 +85,8 @@ impl SlashCommand {
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
             SlashCommand::Branch => "reply from a copied point in the latest assistant response",
+            SlashCommand::BranchInfo => "show current branch metadata",
+            SlashCommand::BranchList => "list child branches from this chat",
             // SlashCommand::Undo => "ask Codex to undo a turn",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
@@ -193,6 +197,8 @@ impl SlashCommand {
             | SlashCommand::Mcp
             | SlashCommand::Apps
             | SlashCommand::Plugins
+            | SlashCommand::BranchInfo
+            | SlashCommand::BranchList
             | SlashCommand::Feedback
             | SlashCommand::Quit
             | SlashCommand::Exit

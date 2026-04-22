@@ -3735,7 +3735,11 @@ impl CodexMessageProcessor {
             let conversation_id = summary.conversation_id;
             thread_ids.insert(conversation_id);
 
-            let thread = summary_to_thread(summary, &self.config.cwd);
+            let mut thread = summary_to_thread(summary, &self.config.cwd);
+            if let Some(rollout_path) = thread.path.clone() {
+                thread.forked_from_id = forked_from_id_from_rollout(rollout_path.as_path()).await;
+                apply_branch_context_from_rollout(&mut thread, rollout_path.as_path()).await;
+            }
             status_ids.push(thread.id.clone());
             threads.push((conversation_id, thread));
         }

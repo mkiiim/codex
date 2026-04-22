@@ -153,6 +153,12 @@ pub(crate) enum AppEvent {
     /// Select a branch point by matching copied assistant text.
     BranchFromSnippet(String),
 
+    /// Show branch metadata for the current thread.
+    ShowBranchInfo,
+
+    /// List child branches created from the current thread.
+    ShowBranchList,
+
     /// Request to exit the application.
     ///
     /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the

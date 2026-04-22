@@ -184,6 +184,7 @@ use uuid::Uuid;
 mod agent_navigation;
 mod app_server_adapter;
 pub(crate) mod app_server_requests;
+mod branch_commands;
 mod loaded_threads;
 mod pending_interactive_replay;
 mod replay_filter;
@@ -4857,6 +4858,14 @@ impl App {
             AppEvent::BranchFromSnippet(snippet) => {
                 self.handle_branch_from_snippet(tui, app_server, &snippet)
                     .await?;
+            }
+            AppEvent::ShowBranchInfo => {
+                self.show_branch_info();
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::ShowBranchList => {
+                self.show_branch_list(app_server).await;
+                tui.frame_requester().schedule_frame();
             }
             AppEvent::InsertHistoryCell(cell) => {
                 let cell: Arc<dyn HistoryCell> = cell.into();

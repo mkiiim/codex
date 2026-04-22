@@ -1225,6 +1225,24 @@ async fn slash_fork_requests_current_fork() {
 }
 
 #[tokio::test]
+async fn slash_branch_info_requests_branch_info() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command(SlashCommand::BranchInfo);
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::ShowBranchInfo));
+}
+
+#[tokio::test]
+async fn slash_branch_list_requests_branch_list() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command(SlashCommand::BranchList);
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::ShowBranchList));
+}
+
+#[tokio::test]
 async fn slash_rollout_displays_current_path() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let rollout_path = PathBuf::from("/tmp/codex-test-rollout.jsonl");

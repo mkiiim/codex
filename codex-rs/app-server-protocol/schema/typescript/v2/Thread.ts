@@ -17,7 +17,11 @@ forkedFromId: string | null,
  */
 branchDepth: number | null,
 /**
- * Short UI label for the branch anchor, usually the final few words at the read point.
+ * Short UI label for the beginning of the branch anchor, used for branch recognition.
+ */
+branchAnchorHeadSummary: string | null,
+/**
+ * Short UI label for the end of the branch anchor, usually the final few words at the read point.
  */
 branchAnchorSummary: string | null,
 /**

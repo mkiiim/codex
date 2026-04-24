@@ -1112,6 +1112,7 @@ pub(crate) struct App {
 pub(crate) struct PendingTranscriptReply {
     pub(crate) read_position: TranscriptReadPosition,
     pub(crate) fork_snapshot: codex_app_server_protocol::ThreadForkSnapshot,
+    pub(crate) anchor_head_summary: Option<String>,
     pub(crate) anchor_summary: Option<String>,
     pub(crate) current_index: usize,
     pub(crate) total: usize,
@@ -3475,6 +3476,7 @@ impl App {
                 thread_id,
                 forked_from_id: None,
                 branch_depth: None,
+                branch_anchor_head_summary: None,
                 branch_anchor_summary: None,
                 thread_name: None,
                 model: self.chat_widget.current_model().to_string(),
@@ -3498,6 +3500,7 @@ impl App {
             .as_deref()
             .and_then(|id| ThreadId::from_string(id).ok());
         session.branch_depth = thread.branch_depth;
+        session.branch_anchor_head_summary = thread.branch_anchor_head_summary.clone();
         session.branch_anchor_summary = thread.branch_anchor_summary.clone();
         session.model_provider_id = thread.model_provider.clone();
         session.cwd = thread.cwd.clone();
@@ -6713,6 +6716,7 @@ impl App {
         let pending_reply = PendingTranscriptReply {
             read_position: reply_target.read_position,
             fork_snapshot,
+            anchor_head_summary: reply_target.anchor_head_summary,
             anchor_summary: reply_target.anchor_summary,
             current_index: reply_target.current_index,
             total: reply_target.total,
@@ -6759,11 +6763,11 @@ impl App {
             }
             Err(BranchSnippetError::EmptySnippet) => {
                 self.chat_widget
-                    .add_error_message("Usage: /branch <copied assistant text>".to_string());
+                    .add_error_message("Usage: /branch-from <copied assistant text>".to_string());
             }
             Err(BranchSnippetError::NoAssistantResponse) => {
                 self.chat_widget.add_error_message(
-                    "'/branch' needs an assistant response to branch from.".to_string(),
+                    "'/branch-from' needs an assistant response to branch from.".to_string(),
                 );
             }
             Err(BranchSnippetError::NoMatch) => {
@@ -6794,7 +6798,8 @@ impl App {
     ) -> Result<()> {
         let Some(parent_thread_id) = self.chat_widget.thread_id() else {
             self.chat_widget.add_error_message(
-                "'/branch' is unavailable before the current conversation has started.".to_string(),
+                "'/branch-from' is unavailable before the current conversation has started."
+                    .to_string(),
             );
             return Ok(());
         };
@@ -6809,6 +6814,7 @@ impl App {
 
         let fork_snapshot = self.fork_snapshot_from_transcript_reply_target(&reply_target);
         let anchor_summary = reply_target.anchor_summary.clone();
+        let anchor_head_summary = reply_target.anchor_head_summary.clone();
         let branch_notice = branch_created_notice(anchor_summary.as_deref());
         let branch_depth = self.chat_widget.branch_depth().saturating_add(1);
         let rollout_path = self
@@ -6823,6 +6829,7 @@ impl App {
                 fork_snapshot,
                 Some(ThreadBranchContext {
                     depth: u32::try_from(branch_depth).unwrap_or(u32::MAX),
+                    anchor_head_summary,
                     anchor_summary,
                 }),
             )
@@ -6868,7 +6875,7 @@ impl App {
         }) {
             "Could not create the branch because the current conversation is not available for forking yet.".to_string()
         } else {
-            format!("Failed to create branch: {err}")
+            format!("Failed to create branch: {}", Self::fork_error_details(err))
         }
     }
 
@@ -6882,12 +6889,32 @@ impl App {
             && self.chat_widget.composer_is_empty()
             && let Some(parent_thread_id) = self.active_branch_parent_thread_id()
         {
-            if self
-                .select_agent_thread(tui, app_server, parent_thread_id)
-                .await
-                .is_err()
-            {
-                return false;
+            if self.thread_event_channels.contains_key(&parent_thread_id) {
+                if self
+                    .select_agent_thread(tui, app_server, parent_thread_id)
+                    .await
+                    .is_err()
+                {
+                    return false;
+                }
+            } else {
+                let target_session = SessionTarget {
+                    path: None,
+                    thread_id: parent_thread_id,
+                };
+                match self
+                    .resume_target_session(tui, app_server, target_session)
+                    .await
+                {
+                    Ok(AppRunControl::Continue) => {}
+                    Ok(AppRunControl::Exit(_)) => return true,
+                    Err(err) => {
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to return to parent branch {parent_thread_id}: {err}"
+                        ));
+                        return true;
+                    }
+                }
             }
             self.active_thread_id == Some(parent_thread_id)
         } else {
@@ -6918,6 +6945,7 @@ impl App {
                 pending_reply.fork_snapshot,
                 Some(ThreadBranchContext {
                     depth: u32::try_from(branch_depth).unwrap_or(u32::MAX),
+                    anchor_head_summary: pending_reply.anchor_head_summary.clone(),
                     anchor_summary: pending_reply.anchor_summary.clone(),
                 }),
             )
@@ -6959,20 +6987,31 @@ impl App {
         }) {
             "Could not create the branch because the current conversation is not available for forking yet. Your reply was not sent, and any draft text was restored to the composer.".to_string()
         } else {
-            let details = err
-                .chain()
-                .skip(1)
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(": ");
-            let details = if details.is_empty() {
-                err.to_string()
-            } else {
-                format!("{err}: {details}")
-            };
             format!(
-                "Failed to create branch: {details}. Your reply was not sent, and any draft text was restored to the composer."
+                "Failed to create branch: {}. Your reply was not sent, and any draft text was restored to the composer.",
+                Self::fork_error_details(err)
             )
+        }
+    }
+
+    fn fork_error_details(err: &color_eyre::Report) -> String {
+        let messages = err.chain().map(ToString::to_string).collect::<Vec<_>>();
+        match messages.as_slice() {
+            [] => err.to_string(),
+            [message] => message.clone(),
+            [first, rest @ ..] => {
+                let details = rest
+                    .iter()
+                    .filter(|message| message.as_str() != first.as_str())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(": ");
+                if details.is_empty() {
+                    first.clone()
+                } else {
+                    format!("{first}: {details}")
+                }
+            }
         }
     }
 
@@ -10403,6 +10442,7 @@ guardian_approval = true
                     id: agent_thread_id.to_string(),
                     forked_from_id: None,
                     branch_depth: None,
+                    branch_anchor_head_summary: None,
                     branch_anchor_summary: None,
                     preview: "agent thread".to_string(),
                     ephemeral: false,
@@ -10486,6 +10526,7 @@ guardian_approval = true
                     id: agent_thread_id.to_string(),
                     forked_from_id: None,
                     branch_depth: None,
+                    branch_anchor_head_summary: None,
                     branch_anchor_summary: None,
                     preview: "agent thread".to_string(),
                     ephemeral: false,
@@ -10859,6 +10900,18 @@ guardian_approval = true
         assert_eq!(
             App::pending_transcript_reply_fork_error_message(&err),
             "Could not create the branch because the current conversation is not available for forking yet. Your reply was not sent, and any draft text was restored to the composer."
+        );
+    }
+
+    #[test]
+    fn branch_start_error_message_includes_server_cause() {
+        let err =
+            color_eyre::eyre::eyre!("thread/fork failed: source line index 99 is out of range")
+                .wrap_err("thread/fork failed during TUI bootstrap");
+
+        assert_eq!(
+            App::branch_start_error_message(&err),
+            "Failed to create branch: thread/fork failed during TUI bootstrap: thread/fork failed: source line index 99 is out of range"
         );
     }
 
@@ -11480,6 +11533,7 @@ guardian_approval = true
             thread_id,
             forked_from_id: None,
             branch_depth: None,
+            branch_anchor_head_summary: None,
             branch_anchor_summary: None,
             thread_name: None,
             model: "gpt-test".to_string(),
@@ -13037,6 +13091,7 @@ guardian_approval = true
                 source_byte_offset: 4,
             },
             fork_anchor: None,
+            anchor_head_summary: None,
             anchor_summary: None,
             current_index: 1,
             total: 2,
@@ -13054,6 +13109,7 @@ guardian_approval = true
                     source_line_index: 0,
                     source_byte_offset: 4,
                 },
+                anchor_head_summary: None,
                 anchor_summary: None,
                 current_index: 1,
                 total: 2,
@@ -13087,6 +13143,7 @@ guardian_approval = true
                     id: thread_id.to_string(),
                     forked_from_id: None,
                     branch_depth: None,
+                    branch_anchor_head_summary: None,
                     branch_anchor_summary: None,
                     preview: String::new(),
                     ephemeral: false,

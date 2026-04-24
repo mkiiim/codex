@@ -1977,11 +1977,11 @@ impl ChatWidget {
         let label = (self.branch_depth > 0).then(|| {
             if let Some(anchor_summary) = self.branch_anchor_summary.as_deref() {
                 format!(
-                    "branch depth {}: \"...{}\" · Esc to return",
+                    "d{} \"...{}\" · Esc to return",
                     self.branch_depth, anchor_summary
                 )
             } else {
-                format!("branch depth {} · Esc to return", self.branch_depth)
+                format!("d{} · Esc to return", self.branch_depth)
             }
         });
         self.bottom_pane.set_branch_context_label(label);

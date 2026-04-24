@@ -788,8 +788,15 @@
             "null"
           ]
         },
+        "branchAnchorHeadSummary": {
+          "description": "Short UI label for the beginning of the branch anchor, used for branch recognition.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "branchAnchorSummary": {
-          "description": "Short UI label for the branch anchor, usually the final few words at the read point.",
+          "description": "Short UI label for the end of the branch anchor, usually the final few words at the read point.",
           "type": [
             "string",
             "null"

@@ -118,6 +118,8 @@ impl SkillPopup {
                     match_indices: indices,
                     display_shortcut: None,
                     description,
+                    detail: None,
+                    detail_indent: 0,
                     category_tag: None,
                     is_disabled: false,
                     disabled_reason: None,

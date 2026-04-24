@@ -132,6 +132,7 @@ pub(crate) struct SelectionItem {
     pub toggle_placeholder: Option<&'static str>,
     pub display_shortcut: Option<KeyBinding>,
     pub description: Option<String>,
+    pub detail: Option<String>,
     pub selected_description: Option<String>,
     pub is_current: bool,
     pub is_default: bool,
@@ -488,6 +489,8 @@ impl ListSelectionView {
                         display_shortcut: item.display_shortcut,
                         match_indices: None,
                         description,
+                        detail: item.detail.clone(),
+                        detail_indent: wrap_prefix_width,
                         category_tag: None,
                         wrap_indent,
                         is_disabled,
@@ -1482,6 +1485,30 @@ mod tests {
         assert_snapshot!(
             "list_selection_footer_note_wraps",
             render_lines_with_width(&view, /*width*/ 40)
+        );
+    }
+
+    #[test]
+    fn snapshot_item_detail_renders_as_second_line() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let items = vec![SelectionItem {
+            name: "d3 → · 4m · 019db0d3-dd1e-71b1-a5d9-5248aaf2d19d".to_string(),
+            detail: Some("\"...entity type and payment facts matter.\"".to_string()),
+            dismiss_on_select: true,
+            ..Default::default()
+        }];
+        let view = ListSelectionView::new(
+            SelectionViewParams {
+                title: Some("Branch navigator".to_string()),
+                items,
+                ..Default::default()
+            },
+            tx,
+        );
+        assert_snapshot!(
+            "list_selection_item_detail_second_line",
+            render_lines_with_width(&view, /*width*/ 72)
         );
     }
 

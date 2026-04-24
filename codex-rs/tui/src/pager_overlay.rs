@@ -72,6 +72,7 @@ pub(crate) enum TranscriptForkAnchor {
 pub(crate) struct TranscriptReplyTarget {
     pub(crate) read_position: TranscriptReadPosition,
     pub(crate) fork_anchor: Option<TranscriptForkAnchor>,
+    pub(crate) anchor_head_summary: Option<String>,
     pub(crate) anchor_summary: Option<String>,
     pub(crate) current_index: usize,
     pub(crate) total: usize,
@@ -787,6 +788,7 @@ impl TranscriptOverlay {
         Some(TranscriptReplyTarget {
             read_position,
             fork_anchor: None,
+            anchor_head_summary: None,
             anchor_summary: None,
             current_index: current_index + 1,
             total: assistant_positions.len(),
@@ -1492,6 +1494,7 @@ mod tests {
                     source_byte_offset: 4,
                 },
                 fork_anchor: None,
+                anchor_head_summary: None,
                 anchor_summary: None,
                 current_index: 1,
                 total: 2,

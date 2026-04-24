@@ -24,7 +24,10 @@ path?: string | null, /**
  * UI branch depth for the forked thread, when the fork represents a conversational branch.
  */
 branchDepth?: number | null, /**
- * Short UI label for the branch anchor, usually the final few words at the read point.
+ * Short UI label for the beginning of the branch anchor, used for branch recognition.
+ */
+branchAnchorHeadSummary?: string | null, /**
+ * Short UI label for the end of the branch anchor, usually the final few words at the read point.
  */
 branchAnchorSummary?: string | null, /**
  * Configuration overrides for the forked thread, if any.

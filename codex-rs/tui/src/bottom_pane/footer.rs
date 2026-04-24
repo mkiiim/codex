@@ -49,6 +49,9 @@ use crate::ui_consts::FOOTER_INDENT_COLS;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
+use ratatui::style::Modifier;
+use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -257,10 +260,26 @@ pub(crate) fn render_footer_from_props(
 }
 
 pub(crate) fn branch_context_line(props: &FooterProps) -> Option<Line<'static>> {
-    props
-        .branch_context_label
-        .as_ref()
-        .map(|label| Line::from(label.clone()).dim())
+    props.branch_context_label.as_ref().map(|label| {
+        let style = branch_context_style(label);
+        Line::from(label.clone()).style(style)
+    })
+}
+
+fn branch_context_style(label: &str) -> Style {
+    let depth = label
+        .strip_prefix('d')
+        .and_then(|rest| rest.split_once(char::is_whitespace))
+        .and_then(|(depth, _)| depth.parse::<u8>().ok())
+        .unwrap_or(1);
+    match depth {
+        1 => Style::new()
+            .fg(Color::LightCyan)
+            .add_modifier(Modifier::BOLD),
+        2 => Style::new().fg(Color::LightCyan),
+        3 => Style::new().fg(Color::Cyan),
+        _ => Style::new().fg(Color::Cyan).add_modifier(Modifier::DIM),
+    }
 }
 
 pub(crate) fn left_fits(area: Rect, left_width: u16) -> bool {
@@ -1763,7 +1782,7 @@ mod tests {
             status_line_enabled: false,
             active_agent_label: None,
             branch_context_label: Some(
-                "branch depth 2: \"...payment terms, and late-fee rules.\"".to_string(),
+                "d2 \"...payment terms, and late-fee rules.\" · Esc to return".to_string(),
             ),
         };
 
@@ -1785,7 +1804,7 @@ mod tests {
             )),
             status_line_enabled: true,
             active_agent_label: None,
-            branch_context_label: Some("branch depth 1".to_string()),
+            branch_context_label: Some("d1 · Esc to return".to_string()),
         };
 
         snapshot_footer_with_mode_indicator(
@@ -1808,7 +1827,7 @@ mod tests {
             status_line_value: None,
             status_line_enabled: false,
             active_agent_label: None,
-            branch_context_label: Some("branch depth 1: \"...fee rules.\"".to_string()),
+            branch_context_label: Some("d1 \"...fee rules.\" · Esc to return".to_string()),
         };
 
         snapshot_footer("footer_branch_context_label_with_draft", props);
@@ -1870,6 +1889,28 @@ mod tests {
         assert!(
             screen.contains('…'),
             "status line should be truncated with ellipsis to keep mode indicator"
+        );
+    }
+
+    #[test]
+    fn branch_context_style_fades_with_depth() {
+        assert_eq!(
+            branch_context_style("d1 · Esc to return"),
+            Style::new()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD)
+        );
+        assert_eq!(
+            branch_context_style("d2 \"...anchor\" · Esc to return"),
+            Style::new().fg(Color::LightCyan)
+        );
+        assert_eq!(
+            branch_context_style("d3 \"...anchor\" · Esc to return"),
+            Style::new().fg(Color::Cyan)
+        );
+        assert_eq!(
+            branch_context_style("d9 \"...anchor\" · Esc to return"),
+            Style::new().fg(Color::Cyan).add_modifier(Modifier::DIM)
         );
     }
 

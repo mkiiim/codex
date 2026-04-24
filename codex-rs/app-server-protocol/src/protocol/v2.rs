@@ -2935,7 +2935,12 @@ pub struct ThreadForkParams {
     #[ts(optional = nullable)]
     pub branch_depth: Option<u32>,
 
-    /// Short UI label for the branch anchor, usually the final few words at the read point.
+    /// Short UI label for the beginning of the branch anchor, used for branch recognition.
+    #[experimental("thread/fork.branchContext")]
+    #[ts(optional = nullable)]
+    pub branch_anchor_head_summary: Option<String>,
+
+    /// Short UI label for the end of the branch anchor, usually the final few words at the read point.
     #[experimental("thread/fork.branchContext")]
     #[ts(optional = nullable)]
     pub branch_anchor_summary: Option<String>,
@@ -3933,7 +3938,9 @@ pub struct Thread {
     pub forked_from_id: Option<String>,
     /// UI branch depth when this thread is part of a conversational branch.
     pub branch_depth: Option<u32>,
-    /// Short UI label for the branch anchor, usually the final few words at the read point.
+    /// Short UI label for the beginning of the branch anchor, used for branch recognition.
+    pub branch_anchor_head_summary: Option<String>,
+    /// Short UI label for the end of the branch anchor, usually the final few words at the read point.
     pub branch_anchor_summary: Option<String>,
     /// Usually the first user message in the thread, if available.
     pub preview: String,

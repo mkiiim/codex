@@ -355,7 +355,7 @@ For a low-risk prototype that fits the current architecture, support:
 - user scrolls normally in the terminal
 - user copies a sufficiently specific block of assistant text with the OS or
   terminal selection
-- user runs `/branch <copied assistant text>`
+- user runs `/branch-from <copied assistant text>` (with `/branch` retained as a short alias)
 - Codex searches the latest assistant response for that text
 - Codex maps the match to a semantic endpoint, starting with the containing
   paragraph or list item
@@ -363,8 +363,11 @@ For a low-risk prototype that fits the current architecture, support:
   at that anchor, excluding unread assistant content after the anchor
 - the composer is empty in the branch, and the user's next message submits
   normally into that child thread
-- while the branch is active, the footer shows a dedicated `branch depth <n>:
+- while the branch is active, the footer shows a compact dedicated `d<n>
   "...<anchor tail>"` row plus an `Esc to return` hint
+- `/branch-list` shows a compact two-line branch navigator row: depth, Unicode
+  relation glyph, compact last-active age, full thread id, then the anchor
+  snippet on the second line
 - the branch depth and anchor tail are persisted as thread metadata so the
   indicator can be reconstructed after `codex resume <branch-thread-id>`
 
@@ -666,8 +669,10 @@ Persist branch context on the forked thread:
 
 - `forked_from_id` preserves the parent thread id
 - `branch_depth` preserves the current nesting depth
+- `branch_anchor_head_summary` preserves a short recognition label from the
+  beginning of the selected anchor
 - `branch_anchor_summary` preserves the short footer label for the selected
-  anchor
+  cutoff point
 
 Saved read positions that do not create a branch are still a follow-up. They may
 remain TUI-local until the product needs restart-stable reading progress without
@@ -717,7 +722,8 @@ The wire payload should communicate:
 - discard later items/turns beyond the branch point
 - materialize the new forked thread from the truncated history
 - preserve branch provenance metadata on the new thread, including the parent id,
-  branch depth, and short anchor summary used by the TUI footer
+  branch depth, short anchor-head summary used by branch navigation, and short
+  anchor summary used by the TUI footer
 
 This likely requires a reusable rollout/turn-history truncation helper rather
 than embedding branch logic directly inside `thread_fork`.

@@ -3924,6 +3924,11 @@ impl CodexMessageProcessor {
             Ok(stored_thread) => {
                 let (mut thread, history) =
                     thread_from_stored_thread(stored_thread, fallback_provider, &self.config.cwd);
+                if let Some(rollout_path) = thread.path.clone() {
+                    thread.forked_from_id =
+                        forked_from_id_from_rollout(rollout_path.as_path()).await;
+                    apply_branch_context_from_rollout(&mut thread, rollout_path.as_path()).await;
+                }
                 if include_turns && let Some(history) = history {
                     thread.turns = build_turns_from_rollout_items(&history.items);
                 }
@@ -4795,6 +4800,7 @@ impl CodexMessageProcessor {
             path,
             snapshot,
             branch_depth,
+            branch_anchor_head_summary,
             branch_anchor_summary,
             model,
             model_provider,
@@ -4811,6 +4817,7 @@ impl CodexMessageProcessor {
         } = params;
         let branch_context = branch_depth.map(|depth| BranchContext {
             depth,
+            anchor_head_summary: branch_anchor_head_summary.clone(),
             anchor_summary: branch_anchor_summary,
         });
 
@@ -5069,6 +5076,7 @@ impl CodexMessageProcessor {
                 .map(|id| id.to_string());
             if let Some(branch_context) = branch_context.as_ref() {
                 thread.branch_depth = Some(branch_context.depth);
+                thread.branch_anchor_head_summary = branch_context.anchor_head_summary.clone();
                 thread.branch_anchor_summary = branch_context.anchor_summary.clone();
             }
             if let Err(message) = populate_thread_turns(
@@ -9635,6 +9643,7 @@ fn thread_from_stored_thread(
         id: thread.thread_id.to_string(),
         forked_from_id: thread.forked_from_id.map(|id| id.to_string()),
         branch_depth: None,
+        branch_anchor_head_summary: None,
         branch_anchor_summary: None,
         preview: thread.first_user_message.unwrap_or(thread.preview),
         ephemeral: false,
@@ -9985,6 +9994,7 @@ async fn branch_context_from_rollout(path: &Path) -> Option<BranchContext> {
 async fn apply_branch_context_from_rollout(thread: &mut Thread, path: &Path) {
     if let Some(branch_context) = branch_context_from_rollout(path).await {
         thread.branch_depth = Some(branch_context.depth);
+        thread.branch_anchor_head_summary = branch_context.anchor_head_summary;
         thread.branch_anchor_summary = branch_context.anchor_summary;
     }
 }
@@ -10094,6 +10104,7 @@ fn build_thread_from_snapshot(
         id: thread_id.to_string(),
         forked_from_id: None,
         branch_depth: None,
+        branch_anchor_head_summary: None,
         branch_anchor_summary: None,
         preview: String::new(),
         ephemeral: config_snapshot.ephemeral,
@@ -10151,6 +10162,7 @@ pub(crate) fn summary_to_thread(
         id: conversation_id.to_string(),
         forked_from_id: None,
         branch_depth: None,
+        branch_anchor_head_summary: None,
         branch_anchor_summary: None,
         preview,
         ephemeral: false,

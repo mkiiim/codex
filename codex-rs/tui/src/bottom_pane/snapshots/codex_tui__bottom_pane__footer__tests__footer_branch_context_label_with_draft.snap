@@ -1,6 +1,6 @@
 ---
 source: tui/src/bottom_pane/footer.rs
-assertion_line: 1317
+assertion_line: 1341
 expression: terminal.backend()
 ---
-"  branch depth 1: "...fee rules."                                               "
+"  d1 "...fee rules." · Esc to return                                            "

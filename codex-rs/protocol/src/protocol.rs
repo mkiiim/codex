@@ -2793,6 +2793,8 @@ pub struct SessionStateUpdate {
 pub struct BranchContext {
     pub depth: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_head_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor_summary: Option<String>,
 }
 

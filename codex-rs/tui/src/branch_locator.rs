@@ -36,12 +36,18 @@ pub(crate) fn locate_branch_snippet(
     let source_lines = response.source_lines();
     let normalized_source = NormalizedText::new(&source_lines);
     let match_range = find_branch_snippet_match(&normalized_source.text, &snippets)?;
+    let (match_start_line_index, _) = normalized_source
+        .mapping
+        .get(match_range.start)
+        .copied()
+        .ok_or(BranchSnippetError::NoAnchor)?;
     let (match_end_line_index, _) = normalized_source
         .mapping
         .get(match_range.end.saturating_sub(1))
         .copied()
         .ok_or(BranchSnippetError::NoAnchor)?;
 
+    let source_line_start_index = structure_start_line(&source_lines, match_start_line_index);
     let source_line_index = structure_end_line(&source_lines, match_end_line_index);
     let (cell_index, cell, cell_source_line_index) = response
         .cell_position(source_line_index)
@@ -81,7 +87,9 @@ pub(crate) fn locate_branch_snippet(
     Ok(TranscriptReplyTarget {
         read_position,
         fork_anchor: raw_assistant_markdown
-            .and_then(|markdown| response.fork_anchor(markdown, &snippets)),
+            .and_then(|markdown| response.fork_anchor(markdown, &snippets))
+            .or_else(|| latest_assistant_anchor_from_lines(&source_lines, source_line_index)),
+        anchor_head_summary: branch_anchor_head_summary(&source_lines, source_line_start_index),
         anchor_summary: branch_anchor_summary(&source_lines, source_line_index, source_byte_offset),
         current_index,
         total: assistant_positions.len(),
@@ -197,6 +205,23 @@ fn absolute_line_end_anchor(
     (absolute_anchor < raw_text.len()).then_some(absolute_anchor)
 }
 
+fn latest_assistant_anchor_from_lines(
+    source_lines: &[String],
+    line_index: usize,
+) -> Option<TranscriptForkAnchor> {
+    let line_start = source_lines
+        .iter()
+        .take(line_index)
+        .map(|line| line.len() + 1)
+        .sum::<usize>();
+    let line = source_lines.get(line_index)?;
+    let line_anchor = AgentMessageCell::transcript_anchor_byte_offset(line, &(0..line.len()))?;
+    Some(TranscriptForkAnchor::LatestAssistant {
+        source_line_index: 0,
+        source_byte_offset: line_start + line_anchor,
+    })
+}
+
 fn normalized_snippet_candidates(snippet: &str) -> Vec<NormalizedText> {
     let raw_lines = vec![snippet.to_string()];
     let stripped_lines = snippet
@@ -270,6 +295,34 @@ fn structure_end_line(source_lines: &[String], line_index: usize) -> usize {
         .map(|(index, _)| index)
         .last()
         .unwrap_or(line_index)
+}
+
+fn structure_start_line(source_lines: &[String], line_index: usize) -> usize {
+    if let Some(list_item_start) = containing_list_item_start(source_lines, line_index) {
+        return list_item_start;
+    }
+
+    (0..=line_index)
+        .rev()
+        .take_while(|index| {
+            source_lines
+                .get(*index)
+                .is_some_and(|line| !line.trim().is_empty())
+        })
+        .last()
+        .unwrap_or(line_index)
+}
+
+fn branch_anchor_head_summary(source_lines: &[String], source_line_index: usize) -> Option<String> {
+    const SUMMARY_WORDS: usize = 8;
+
+    let line = source_lines.get(source_line_index)?;
+    let summary = line
+        .split_whitespace()
+        .take(SUMMARY_WORDS)
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!summary.is_empty()).then_some(summary)
 }
 
 fn branch_anchor_summary(
@@ -462,6 +515,13 @@ mod tests {
                 source_byte_offset: "continues here.".len() - 1,
             }
         );
+        assert_eq!(
+            target.fork_anchor,
+            Some(TranscriptForkAnchor::LatestAssistant {
+                source_line_index: 0,
+                source_byte_offset: "First assistant line\ncontinues here.".len() - 1,
+            })
+        );
     }
 
     #[test]
@@ -534,6 +594,10 @@ mod tests {
                 source_line_index: 0,
                 source_byte_offset: 338,
             })
+        );
+        assert_eq!(
+            target.anchor_head_summary,
+            Some("2. Fee structure: monthly retainer amount, whether hours".to_string())
         );
         assert_eq!(
             target.anchor_summary,

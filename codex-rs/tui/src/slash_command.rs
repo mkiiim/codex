@@ -28,7 +28,8 @@ pub enum SlashCommand {
     New,
     Resume,
     Fork,
-    Branch,
+    #[strum(to_string = "branch-from", serialize = "branch")]
+    BranchFrom,
     BranchInfo,
     BranchList,
     Init,
@@ -84,7 +85,9 @@ impl SlashCommand {
             SlashCommand::Resume => "resume a saved chat",
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
-            SlashCommand::Branch => "reply from a copied point in the latest assistant response",
+            SlashCommand::BranchFrom => {
+                "create a branch from copied text in the latest assistant response"
+            }
             SlashCommand::BranchInfo => "show current branch metadata",
             SlashCommand::BranchList => "list child branches from this chat",
             // SlashCommand::Undo => "ask Codex to undo a turn",
@@ -145,7 +148,7 @@ impl SlashCommand {
                 | SlashCommand::Plan
                 | SlashCommand::Fast
                 | SlashCommand::Mcp
-                | SlashCommand::Branch
+                | SlashCommand::BranchFrom
                 | SlashCommand::Side
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
@@ -166,7 +169,7 @@ impl SlashCommand {
             SlashCommand::New
             | SlashCommand::Resume
             | SlashCommand::Fork
-            | SlashCommand::Branch
+            | SlashCommand::BranchFrom
             | SlashCommand::Init
             | SlashCommand::Compact
             // | SlashCommand::Undo
@@ -251,8 +254,17 @@ mod tests {
     }
 
     #[test]
-    fn branch_command_requires_inline_args_and_waits_for_idle_task() {
-        assert!(SlashCommand::Branch.supports_inline_args());
-        assert!(!SlashCommand::Branch.available_during_task());
+    fn branch_from_command_requires_inline_args_and_waits_for_idle_task() {
+        assert!(SlashCommand::BranchFrom.supports_inline_args());
+        assert!(!SlashCommand::BranchFrom.available_during_task());
+    }
+
+    #[test]
+    fn branch_from_is_canonical_name_with_branch_alias() {
+        assert_eq!(SlashCommand::BranchFrom.command(), "branch-from");
+        assert_eq!(
+            SlashCommand::from_str("branch"),
+            Ok(SlashCommand::BranchFrom)
+        );
     }
 }

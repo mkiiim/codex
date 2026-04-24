@@ -140,6 +140,7 @@ pub(crate) struct ThreadSessionState {
     pub(crate) thread_id: ThreadId,
     pub(crate) forked_from_id: Option<ThreadId>,
     pub(crate) branch_depth: Option<u32>,
+    pub(crate) branch_anchor_head_summary: Option<String>,
     pub(crate) branch_anchor_summary: Option<String>,
     pub(crate) thread_name: Option<String>,
     pub(crate) model: String,
@@ -159,6 +160,7 @@ pub(crate) struct ThreadSessionState {
 
 pub(crate) struct ThreadBranchContext {
     pub(crate) depth: u32,
+    pub(crate) anchor_head_summary: Option<String>,
     pub(crate) anchor_summary: Option<String>,
 }
 
@@ -1046,14 +1048,20 @@ fn thread_fork_params_from_config(
     snapshot: ThreadForkSnapshot,
     branch_context: Option<ThreadBranchContext>,
 ) -> ThreadForkParams {
-    let (branch_depth, branch_anchor_summary) = branch_context.map_or((None, None), |context| {
-        (Some(context.depth), context.anchor_summary)
-    });
+    let (branch_depth, branch_anchor_head_summary, branch_anchor_summary) =
+        branch_context.map_or((None, None, None), |context| {
+            (
+                Some(context.depth),
+                context.anchor_head_summary,
+                context.anchor_summary,
+            )
+        });
     ThreadForkParams {
         thread_id: thread_id.to_string(),
         path: rollout_path,
         snapshot: Some(snapshot),
         branch_depth,
+        branch_anchor_head_summary,
         branch_anchor_summary,
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(&config),
@@ -1130,6 +1138,7 @@ async fn thread_session_state_from_thread_start_response(
         &response.thread.id,
         response.thread.forked_from_id.clone(),
         response.thread.branch_depth,
+        response.thread.branch_anchor_head_summary.clone(),
         response.thread.branch_anchor_summary.clone(),
         response.thread.name.clone(),
         response.thread.path.clone(),
@@ -1155,6 +1164,7 @@ async fn thread_session_state_from_thread_resume_response(
         &response.thread.id,
         response.thread.forked_from_id.clone(),
         response.thread.branch_depth,
+        response.thread.branch_anchor_head_summary.clone(),
         response.thread.branch_anchor_summary.clone(),
         response.thread.name.clone(),
         response.thread.path.clone(),
@@ -1180,6 +1190,7 @@ async fn thread_session_state_from_thread_fork_response(
         &response.thread.id,
         response.thread.forked_from_id.clone(),
         response.thread.branch_depth,
+        response.thread.branch_anchor_head_summary.clone(),
         response.thread.branch_anchor_summary.clone(),
         response.thread.name.clone(),
         response.thread.path.clone(),
@@ -1224,6 +1235,7 @@ async fn thread_session_state_from_thread_response(
     thread_id: &str,
     forked_from_id: Option<String>,
     branch_depth: Option<u32>,
+    branch_anchor_head_summary: Option<String>,
     branch_anchor_summary: Option<String>,
     thread_name: Option<String>,
     rollout_path: Option<PathBuf>,
@@ -1252,6 +1264,7 @@ async fn thread_session_state_from_thread_response(
         thread_id,
         forked_from_id,
         branch_depth,
+        branch_anchor_head_summary,
         branch_anchor_summary,
         thread_name,
         model,
@@ -1499,6 +1512,7 @@ mod tests {
                 id: thread_id.to_string(),
                 forked_from_id: Some(forked_from_id.to_string()),
                 branch_depth: None,
+                branch_anchor_head_summary: None,
                 branch_anchor_summary: None,
                 preview: "hello".to_string(),
                 ephemeral: false,
@@ -1578,6 +1592,7 @@ mod tests {
             &thread_id.to_string(),
             /*forked_from_id*/ None,
             /*branch_depth*/ None,
+            /*branch_anchor_head_summary*/ None,
             /*branch_anchor_summary*/ None,
             Some("restore".to_string()),
             /*rollout_path*/ None,
@@ -1610,6 +1625,7 @@ mod tests {
             &thread_id.to_string(),
             Some(forked_from_id.to_string()),
             /*branch_depth*/ None,
+            /*branch_anchor_head_summary*/ None,
             /*branch_anchor_summary*/ None,
             Some("restore".to_string()),
             /*rollout_path*/ None,

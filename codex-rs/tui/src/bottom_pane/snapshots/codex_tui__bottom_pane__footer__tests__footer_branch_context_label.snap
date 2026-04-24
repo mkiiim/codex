@@ -1,7 +1,7 @@
 ---
 source: tui/src/bottom_pane/footer.rs
-assertion_line: 1299
+assertion_line: 1341
 expression: terminal.backend()
 ---
-"  branch depth 2: "...payment terms, and late-fee rules."                       "
+"  d2 "...payment terms, and late-fee rules." · Esc to return                    "
 "  ? for shortcuts                                            100% context left  "

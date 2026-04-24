@@ -33,8 +33,10 @@ pub(crate) struct GenericDisplayRow {
     pub display_shortcut: Option<KeyBinding>,
     pub match_indices: Option<Vec<usize>>, // indices to bold (char positions)
     pub description: Option<String>,       // optional grey text after the name
-    pub category_tag: Option<String>,      // optional right-side category label
-    pub disabled_reason: Option<String>,   // optional disabled message
+    pub detail: Option<String>,            // optional grey text below the name
+    pub detail_indent: usize,
+    pub category_tag: Option<String>, // optional right-side category label
+    pub disabled_reason: Option<String>, // optional disabled message
     pub is_disabled: bool,
     pub wrap_indent: Option<usize>, // optional indent for wrapped lines
 }
@@ -303,15 +305,40 @@ fn wrap_standard_row(row: &GenericDisplayRow, desc_col: usize, width: u16) -> Ve
         .collect()
 }
 
+fn wrap_detail_lines(row: &GenericDisplayRow, width: u16) -> Vec<Line<'static>> {
+    let Some(detail) = row.detail.as_deref().filter(|detail| !detail.is_empty()) else {
+        return Vec::new();
+    };
+
+    use crate::wrapping::RtOptions;
+    use crate::wrapping::word_wrap_line;
+
+    let indent = row.detail_indent.min(width.saturating_sub(1) as usize);
+    let indent_text = " ".repeat(indent);
+    let line = Line::from(vec![indent_text.clone().into(), detail.to_string().dim()]);
+    let options = RtOptions::new(width.max(1) as usize)
+        .initial_indent(Line::from(""))
+        .subsequent_indent(Line::from(indent_text));
+    word_wrap_line(&line, options)
+        .into_iter()
+        .map(line_to_owned)
+        .collect()
+}
+
 fn wrap_row_lines(row: &GenericDisplayRow, desc_col: usize, width: u16) -> Vec<Line<'static>> {
-    if should_wrap_name_in_column(row) {
+    let mut lines = if should_wrap_name_in_column(row) {
         let wrapped = wrap_two_column_row(row, desc_col, width);
         if !wrapped.is_empty() {
-            return wrapped;
+            wrapped
+        } else {
+            wrap_standard_row(row, desc_col, width)
         }
-    }
+    } else {
+        wrap_standard_row(row, desc_col, width)
+    };
 
-    wrap_standard_row(row, desc_col, width)
+    lines.extend(wrap_detail_lines(row, width));
+    lines
 }
 
 fn apply_row_state_style(lines: &mut [Line<'static>], selected: bool, is_disabled: bool) {

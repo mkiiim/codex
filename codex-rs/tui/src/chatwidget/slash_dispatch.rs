@@ -141,8 +141,8 @@ impl ChatWidget {
             SlashCommand::Fork => {
                 self.app_event_tx.send(AppEvent::ForkCurrentSession);
             }
-            SlashCommand::Branch => {
-                self.add_error_message("Usage: /branch <copied assistant text>".to_string());
+            SlashCommand::BranchFrom => {
+                self.add_error_message("Usage: /branch-from <copied assistant text>".to_string());
             }
             SlashCommand::BranchInfo => {
                 self.app_event_tx.send(AppEvent::ShowBranchInfo);
@@ -606,7 +606,7 @@ impl ChatWidget {
                 );
                 self.request_side_conversation(parent_thread_id, Some(user_message));
             }
-            SlashCommand::Branch if !trimmed.is_empty() => {
+            SlashCommand::BranchFrom if !trimmed.is_empty() => {
                 self.app_event_tx.send(AppEvent::BranchFromSnippet(args));
             }
             SlashCommand::Review if !trimmed.is_empty() => {
@@ -749,7 +749,7 @@ impl ChatWidget {
             | SlashCommand::Clear
             | SlashCommand::Resume
             | SlashCommand::Fork
-            | SlashCommand::Branch
+            | SlashCommand::BranchFrom
             | SlashCommand::BranchInfo
             | SlashCommand::BranchList
             | SlashCommand::Init

@@ -1,0 +1,10 @@
+---
+source: tui/src/bottom_pane/list_selection_view.rs
+assertion_line: 1509
+expression: "render_lines_with_width(&view, 72)"
+---
+                                                                        
+  Branch navigator                                                      
+                                                                        
+› 1. d3 → · 4m · 019db0d3-dd1e-71b1-a5d9-5248aaf2d19d                   
+     "...entity type and payment facts matter."

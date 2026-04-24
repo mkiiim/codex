@@ -889,6 +889,7 @@ mod tests {
             id: thread_id.to_string(),
             forked_from_id: None,
             branch_depth: None,
+            branch_anchor_head_summary: None,
             branch_anchor_summary: None,
             preview: String::new(),
             ephemeral: false,

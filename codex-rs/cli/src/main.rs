@@ -513,6 +513,10 @@ fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<Stri
         lines.push(format!("To continue this session, run {command}"));
     }
 
+    if !lines.is_empty() {
+        lines.insert(0, String::new());
+    }
+
     lines
 }
 
@@ -1855,6 +1859,7 @@ mod tests {
         assert_eq!(
             lines,
             vec![
+                String::new(),
                 "Token usage: total=2 input=0 output=2".to_string(),
                 "To continue this session, run codex resume 123e4567-e89b-12d3-a456-426614174000"
                     .to_string(),
@@ -1869,8 +1874,8 @@ mod tests {
             /*thread_name*/ None,
         );
         let lines = format_exit_messages(exit_info, /*color_enabled*/ true);
-        assert_eq!(lines.len(), 2);
-        assert!(lines[1].contains("\u{1b}[36m"));
+        assert_eq!(lines.len(), 3);
+        assert!(lines[2].contains("\u{1b}[36m"));
     }
 
     #[test]
@@ -1883,6 +1888,7 @@ mod tests {
         assert_eq!(
             lines,
             vec![
+                String::new(),
                 "Token usage: total=2 input=0 output=2".to_string(),
                 "To continue this session, run codex resume 123e4567-e89b-12d3-a456-426614174000"
                     .to_string(),

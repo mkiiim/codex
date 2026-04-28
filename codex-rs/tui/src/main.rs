@@ -32,6 +32,10 @@ fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<Stri
         lines.push(format!("To continue this session, run {command}"));
     }
 
+    if !lines.is_empty() {
+        lines.insert(0, String::new());
+    }
+
     lines
 }
 

@@ -74,6 +74,7 @@ use crate::test_support::PathBufExt;
 use crate::test_support::test_path_buf;
 #[cfg(test)]
 use crate::test_support::test_path_display;
+use crate::text_formatting::truncate_text;
 use crate::tui;
 use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
@@ -372,6 +373,12 @@ fn session_summary(
 struct ResumableThread {
     thread_id: ThreadId,
     thread_name: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResumeSummaryMode {
+    ShowPreviousSessionSummary,
+    SuppressPreviousSessionSummary,
 }
 
 fn resumable_thread(
@@ -4588,6 +4595,7 @@ impl App {
         tui: &mut tui::Tui,
         app_server: &mut AppServerSession,
         target_session: SessionTarget,
+        summary_mode: ResumeSummaryMode,
     ) -> Result<AppRunControl> {
         if self.ignore_same_thread_resume(&target_session) {
             tui.frame_requester().schedule_frame();
@@ -4631,12 +4639,16 @@ impl App {
         };
         self.apply_runtime_policy_overrides(&mut resume_config);
 
-        let summary = session_summary(
-            self.chat_widget.token_usage(),
-            self.chat_widget.thread_id(),
-            self.chat_widget.thread_name(),
-            self.chat_widget.rollout_path().as_deref(),
-        );
+        let summary = matches!(summary_mode, ResumeSummaryMode::ShowPreviousSessionSummary)
+            .then(|| {
+                session_summary(
+                    self.chat_widget.token_usage(),
+                    self.chat_widget.thread_id(),
+                    self.chat_widget.thread_name(),
+                    self.chat_widget.rollout_path().as_deref(),
+                )
+            })
+            .flatten();
         match app_server
             .resume_thread(resume_config.clone(), target_session.thread_id)
             .await
@@ -4763,7 +4775,12 @@ impl App {
                 {
                     SessionSelection::Resume(target_session) => {
                         match self
-                            .resume_target_session(tui, app_server, target_session)
+                            .resume_target_session(
+                                tui,
+                                app_server,
+                                target_session,
+                                ResumeSummaryMode::ShowPreviousSessionSummary,
+                            )
                             .await?
                         {
                             AppRunControl::Continue => {}
@@ -4784,7 +4801,12 @@ impl App {
                 match crate::lookup_session_target_with_app_server(app_server, &id_or_name).await? {
                     Some(target_session) => {
                         return self
-                            .resume_target_session(tui, app_server, target_session)
+                            .resume_target_session(
+                                tui,
+                                app_server,
+                                target_session,
+                                ResumeSummaryMode::ShowPreviousSessionSummary,
+                            )
                             .await;
                     }
                     None => {
@@ -6903,7 +6925,12 @@ impl App {
                     thread_id: parent_thread_id,
                 };
                 match self
-                    .resume_target_session(tui, app_server, target_session)
+                    .resume_target_session(
+                        tui,
+                        app_server,
+                        target_session,
+                        ResumeSummaryMode::SuppressPreviousSessionSummary,
+                    )
                     .await
                 {
                     Ok(AppRunControl::Continue) => {}
@@ -6915,6 +6942,13 @@ impl App {
                         return true;
                     }
                 }
+            }
+            if self.active_thread_id == Some(parent_thread_id) {
+                self.chat_widget
+                    .add_plain_history_lines(branch_return_notice_lines(
+                        self.chat_widget.branch_depth(),
+                        self.chat_widget.branch_anchor_summary(),
+                    ));
             }
             self.active_thread_id == Some(parent_thread_id)
         } else {
@@ -7247,6 +7281,20 @@ fn side_return_shortcut_matches(key_event: KeyEvent) -> bool {
         } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'c') => true,
         _ => false,
     }
+}
+
+fn branch_return_notice_lines(
+    branch_depth: usize,
+    anchor_summary: Option<&str>,
+) -> Vec<Line<'static>> {
+    let message = match anchor_summary.map(str::trim) {
+        Some(anchor_summary) if !anchor_summary.is_empty() => format!(
+            "• Returned to parent branch d{branch_depth}: \"...{}\"",
+            truncate_text(anchor_summary, 64)
+        ),
+        _ => format!("• Returned to parent branch d{branch_depth}"),
+    };
+    vec!["".into(), message.into(), "".into()]
 }
 
 /// Collect every MCP server status needed for `/mcp` from the app-server by
@@ -13429,6 +13477,32 @@ guardian_approval = true
         assert_eq!(
             summary.resume_command,
             Some("codex resume 123e4567-e89b-12d3-a456-426614174000".to_string())
+        );
+    }
+
+    #[test]
+    fn branch_return_notice_lines_include_parent_anchor() {
+        assert_eq!(
+            branch_return_notice_lines(2, Some("fee structure and payment terms")),
+            vec![
+                Line::from(""),
+                Line::from(
+                    "• Returned to parent branch d2: \"...fee structure and payment terms\""
+                ),
+                Line::from(""),
+            ]
+        );
+    }
+
+    #[test]
+    fn branch_return_notice_lines_omit_anchor_when_missing() {
+        assert_eq!(
+            branch_return_notice_lines(2, None),
+            vec![
+                Line::from(""),
+                Line::from("• Returned to parent branch d2"),
+                Line::from(""),
+            ]
         );
     }
 }

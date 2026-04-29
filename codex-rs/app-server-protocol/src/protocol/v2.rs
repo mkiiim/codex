@@ -2945,6 +2945,11 @@ pub struct ThreadForkParams {
     #[ts(optional = nullable)]
     pub branch_anchor_summary: Option<String>,
 
+    /// Precise origin snapshot for UI branch provenance when it differs from the truncation snapshot.
+    #[experimental("thread/fork.branchContext")]
+    #[ts(optional = nullable)]
+    pub branch_origin_snapshot: Option<ThreadForkSnapshot>,
+
     /// Configuration overrides for the forked thread, if any.
     #[ts(optional = nullable)]
     pub model: Option<String>,
@@ -3942,6 +3947,8 @@ pub struct Thread {
     pub branch_anchor_head_summary: Option<String>,
     /// Short UI label for the end of the branch anchor, usually the final few words at the read point.
     pub branch_anchor_summary: Option<String>,
+    /// Stable parent-thread anchor location where this branch diverged.
+    pub branch_origin_snapshot: Option<ThreadForkSnapshot>,
     /// Usually the first user message in the thread, if available.
     pub preview: String,
     /// Whether the thread is ephemeral and should not be materialized on disk.

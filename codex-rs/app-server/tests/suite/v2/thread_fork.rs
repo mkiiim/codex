@@ -208,15 +208,46 @@ async fn thread_fork_persists_branch_context_for_resume() -> Result<()> {
         Some("mock_provider"),
         /*git_info*/ None,
     )?;
+    let rollout_path = codex_home
+        .path()
+        .join("sessions")
+        .join("2025")
+        .join("01")
+        .join("05")
+        .join(format!(
+            "rollout-2025-01-05T12-00-00-{conversation_id}.jsonl"
+        ));
+    let mut rollout = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&rollout_path)?;
+    writeln!(
+        rollout,
+        "{}",
+        json!({
+            "timestamp": "2025-01-05T12:00:00Z",
+            "type":"response_item",
+            "payload": {
+                "type":"message",
+                "role":"assistant",
+                "content":[{"type":"output_text","text":"assistant reply"}]
+            }
+        })
+    )?;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
 
     let anchor_head_summary = "Fee structure: monthly retainer amount".to_string();
     let anchor_summary = "payment terms, and late-fee rules.".to_string();
+    let branch_origin_snapshot = ThreadForkSnapshot::AssistantReadAnchor {
+        assistant_message_index: 0,
+        source_line_index: 0,
+        source_byte_offset: 9,
+    };
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
             thread_id: conversation_id.clone(),
+            snapshot: Some(branch_origin_snapshot.clone()),
             branch_depth: Some(2),
             branch_anchor_head_summary: Some(anchor_head_summary.clone()),
             branch_anchor_summary: Some(anchor_summary.clone()),
@@ -236,6 +267,10 @@ async fn thread_fork_persists_branch_context_for_resume() -> Result<()> {
         Some(anchor_head_summary.clone())
     );
     assert_eq!(forked.branch_anchor_summary, Some(anchor_summary.clone()));
+    assert_eq!(
+        forked.branch_origin_snapshot,
+        Some(branch_origin_snapshot.clone())
+    );
 
     let list_id = mcp
         .send_thread_list_request(ThreadListParams {
@@ -270,6 +305,10 @@ async fn thread_fork_persists_branch_context_for_resume() -> Result<()> {
         listed.branch_anchor_summary.as_deref(),
         Some(anchor_summary.as_str())
     );
+    assert_eq!(
+        listed.branch_origin_snapshot,
+        Some(branch_origin_snapshot.clone())
+    );
 
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
@@ -293,6 +332,10 @@ async fn thread_fork_persists_branch_context_for_resume() -> Result<()> {
         read.branch_anchor_summary.as_deref(),
         Some(anchor_summary.as_str())
     );
+    assert_eq!(
+        read.branch_origin_snapshot,
+        Some(branch_origin_snapshot.clone())
+    );
 
     let resume_id = mcp
         .send_thread_resume_request(ThreadResumeParams {
@@ -315,6 +358,7 @@ async fn thread_fork_persists_branch_context_for_resume() -> Result<()> {
         Some(anchor_head_summary)
     );
     assert_eq!(resumed.branch_anchor_summary, Some(anchor_summary));
+    assert_eq!(resumed.branch_origin_snapshot, Some(branch_origin_snapshot));
 
     Ok(())
 }

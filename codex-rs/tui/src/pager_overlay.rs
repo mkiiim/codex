@@ -57,11 +57,6 @@ pub(crate) struct TranscriptReadPosition {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TranscriptForkAnchor {
-    Indexed {
-        assistant_message_index: usize,
-        source_line_index: usize,
-        source_byte_offset: usize,
-    },
     LatestAssistant {
         source_line_index: usize,
         source_byte_offset: usize,

@@ -142,6 +142,7 @@ pub(crate) struct ThreadSessionState {
     pub(crate) branch_depth: Option<u32>,
     pub(crate) branch_anchor_head_summary: Option<String>,
     pub(crate) branch_anchor_summary: Option<String>,
+    pub(crate) branch_origin_snapshot: Option<ThreadForkSnapshot>,
     pub(crate) thread_name: Option<String>,
     pub(crate) model: String,
     pub(crate) model_provider_id: String,
@@ -162,6 +163,7 @@ pub(crate) struct ThreadBranchContext {
     pub(crate) depth: u32,
     pub(crate) anchor_head_summary: Option<String>,
     pub(crate) anchor_summary: Option<String>,
+    pub(crate) origin_snapshot: Option<ThreadForkSnapshot>,
 }
 
 #[derive(Clone, Copy)]
@@ -1048,12 +1050,13 @@ fn thread_fork_params_from_config(
     snapshot: ThreadForkSnapshot,
     branch_context: Option<ThreadBranchContext>,
 ) -> ThreadForkParams {
-    let (branch_depth, branch_anchor_head_summary, branch_anchor_summary) =
-        branch_context.map_or((None, None, None), |context| {
+    let (branch_depth, branch_anchor_head_summary, branch_anchor_summary, branch_origin_snapshot) =
+        branch_context.map_or((None, None, None, None), |context| {
             (
                 Some(context.depth),
                 context.anchor_head_summary,
                 context.anchor_summary,
+                context.origin_snapshot,
             )
         });
     ThreadForkParams {
@@ -1063,6 +1066,7 @@ fn thread_fork_params_from_config(
         branch_depth,
         branch_anchor_head_summary,
         branch_anchor_summary,
+        branch_origin_snapshot,
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(&config),
         cwd: thread_cwd_from_config(&config, thread_params_mode, remote_cwd_override),
@@ -1140,6 +1144,7 @@ async fn thread_session_state_from_thread_start_response(
         response.thread.branch_depth,
         response.thread.branch_anchor_head_summary.clone(),
         response.thread.branch_anchor_summary.clone(),
+        response.thread.branch_origin_snapshot.clone(),
         response.thread.name.clone(),
         response.thread.path.clone(),
         response.model.clone(),
@@ -1166,6 +1171,7 @@ async fn thread_session_state_from_thread_resume_response(
         response.thread.branch_depth,
         response.thread.branch_anchor_head_summary.clone(),
         response.thread.branch_anchor_summary.clone(),
+        response.thread.branch_origin_snapshot.clone(),
         response.thread.name.clone(),
         response.thread.path.clone(),
         response.model.clone(),
@@ -1192,6 +1198,7 @@ async fn thread_session_state_from_thread_fork_response(
         response.thread.branch_depth,
         response.thread.branch_anchor_head_summary.clone(),
         response.thread.branch_anchor_summary.clone(),
+        response.thread.branch_origin_snapshot.clone(),
         response.thread.name.clone(),
         response.thread.path.clone(),
         response.model.clone(),
@@ -1237,6 +1244,7 @@ async fn thread_session_state_from_thread_response(
     branch_depth: Option<u32>,
     branch_anchor_head_summary: Option<String>,
     branch_anchor_summary: Option<String>,
+    branch_origin_snapshot: Option<ThreadForkSnapshot>,
     thread_name: Option<String>,
     rollout_path: Option<PathBuf>,
     model: String,
@@ -1266,6 +1274,7 @@ async fn thread_session_state_from_thread_response(
         branch_depth,
         branch_anchor_head_summary,
         branch_anchor_summary,
+        branch_origin_snapshot,
         thread_name,
         model,
         model_provider_id,
@@ -1514,6 +1523,7 @@ mod tests {
                 branch_depth: None,
                 branch_anchor_head_summary: None,
                 branch_anchor_summary: None,
+                branch_origin_snapshot: None,
                 preview: "hello".to_string(),
                 ephemeral: false,
                 model_provider: "openai".to_string(),
@@ -1594,6 +1604,7 @@ mod tests {
             /*branch_depth*/ None,
             /*branch_anchor_head_summary*/ None,
             /*branch_anchor_summary*/ None,
+            /*branch_origin_snapshot*/ None,
             Some("restore".to_string()),
             /*rollout_path*/ None,
             "gpt-5.4".to_string(),
@@ -1627,6 +1638,7 @@ mod tests {
             /*branch_depth*/ None,
             /*branch_anchor_head_summary*/ None,
             /*branch_anchor_summary*/ None,
+            /*branch_origin_snapshot*/ None,
             Some("restore".to_string()),
             /*rollout_path*/ None,
             "gpt-5.4".to_string(),

@@ -10904,6 +10904,17 @@
             "null"
           ]
         },
+        "branchOriginSnapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadForkSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Stable parent-thread anchor location where this branch diverged."
+        },
         "cliVersion": {
           "description": "Version of the CLI that created the thread.",
           "type": "string"

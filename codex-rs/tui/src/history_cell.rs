@@ -461,6 +461,28 @@ impl HistoryCell for ReasoningSummaryCell {
 pub(crate) struct AgentMessageCell {
     lines: Vec<Line<'static>>,
     is_first_line: bool,
+    branch_markers: Vec<AgentBranchMarker>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentBranchMarker {
+    pub(crate) source_line_index: usize,
+    pub(crate) source_byte_offset: usize,
+    pub(crate) branch_depth: u32,
+    pub(crate) branch_id_suffix: String,
+    pub(crate) anchor_summary: String,
+}
+
+#[derive(Debug, Clone)]
+enum AgentDisplayLineKind {
+    Message { use_agent_bullet: bool },
+    BranchChrome,
+}
+
+#[derive(Debug, Clone)]
+struct AgentDisplayLine {
+    line: Line<'static>,
+    kind: AgentDisplayLineKind,
 }
 
 impl AgentMessageCell {
@@ -468,7 +490,14 @@ impl AgentMessageCell {
         Self {
             lines,
             is_first_line,
+            branch_markers: Vec::new(),
         }
+    }
+
+    pub(crate) fn add_branch_marker(&mut self, marker: AgentBranchMarker) {
+        self.branch_markers.push(marker);
+        self.branch_markers
+            .sort_by_key(|marker| (marker.source_line_index, marker.source_byte_offset));
     }
 
     fn transcript_wrap_options(&self, width: u16, source_line_index: usize) -> RtOptions<'static> {
@@ -711,20 +740,163 @@ impl AgentMessageCell {
         let visible_end = anchor_end.min(range.end);
         indent_width + flat[range.start..visible_end].width()
     }
+
+    fn marker_block_lines(markers: &[&AgentBranchMarker]) -> Vec<AgentDisplayLine> {
+        let block_style = branch_marker_block_style();
+        let mut lines = vec![
+            AgentDisplayLine {
+                line: "".into(),
+                kind: AgentDisplayLineKind::BranchChrome,
+            },
+            AgentDisplayLine {
+                line: Line::from("").style(block_style),
+                kind: AgentDisplayLineKind::BranchChrome,
+            },
+        ];
+        for marker in markers {
+            let summary = truncate_text(marker.anchor_summary.trim(), /*max_graphemes*/ 48);
+            lines.push(AgentDisplayLine {
+                line: Line::from(vec![
+                    "⎇ ".into(),
+                    "Branch ".bold(),
+                    format!("d{} · {}", marker.branch_depth, marker.branch_id_suffix)
+                        .cyan()
+                        .bold(),
+                    ": ".into(),
+                    format!("\"...{summary}\"").dim(),
+                ])
+                .style(block_style),
+                kind: AgentDisplayLineKind::BranchChrome,
+            });
+        }
+        lines.push(AgentDisplayLine {
+            line: Line::from("").style(block_style),
+            kind: AgentDisplayLineKind::BranchChrome,
+        });
+        lines.push(AgentDisplayLine {
+            line: "".into(),
+            kind: AgentDisplayLineKind::BranchChrome,
+        });
+        lines
+    }
+
+    fn display_source_lines(&self) -> Vec<AgentDisplayLine> {
+        if self.branch_markers.is_empty() {
+            return self
+                .lines
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(source_line_index, line)| AgentDisplayLine {
+                    line,
+                    kind: AgentDisplayLineKind::Message {
+                        use_agent_bullet: source_line_index == 0,
+                    },
+                })
+                .collect();
+        }
+
+        let mut markers_by_line: HashMap<usize, Vec<&AgentBranchMarker>> = HashMap::new();
+        for marker in &self.branch_markers {
+            markers_by_line
+                .entry(marker.source_line_index)
+                .or_default()
+                .push(marker);
+        }
+
+        let mut output = Vec::new();
+        for (line_index, line) in self.lines.iter().enumerate() {
+            let Some(mut line_markers) = markers_by_line.remove(&line_index) else {
+                output.push(AgentDisplayLine {
+                    line: line.clone(),
+                    kind: AgentDisplayLineKind::Message {
+                        use_agent_bullet: line_index == 0,
+                    },
+                });
+                continue;
+            };
+            line_markers.sort_by_key(|marker| marker.source_byte_offset);
+            output.extend(Self::decorate_line_with_branch_markers(
+                line_index,
+                line,
+                line_markers,
+            ));
+        }
+
+        output
+    }
+
+    fn decorate_line_with_branch_markers(
+        source_line_index: usize,
+        line: &Line<'static>,
+        markers: Vec<&AgentBranchMarker>,
+    ) -> Vec<AgentDisplayLine> {
+        let mut grouped_markers: Vec<(usize, Vec<&AgentBranchMarker>)> = Vec::new();
+        for marker in markers {
+            if let Some((offset, grouped)) = grouped_markers.last_mut()
+                && *offset == marker.source_byte_offset
+            {
+                grouped.push(marker);
+            } else {
+                grouped_markers.push((marker.source_byte_offset, vec![marker]));
+            }
+        }
+
+        let mut output = Vec::new();
+        let mut remainder = line.clone();
+        let mut consumed_bytes = 0usize;
+        for (source_byte_offset, grouped_markers) in grouped_markers {
+            let Some(split_at) =
+                split_offset_after_anchor(&line_plain_text(line), source_byte_offset)
+            else {
+                continue;
+            };
+            let relative_split_at = split_at.saturating_sub(consumed_bytes);
+            let (prefix, suffix) = split_line_at_byte_offset(&remainder, relative_split_at);
+            if !line_is_empty(&prefix) {
+                output.push(AgentDisplayLine {
+                    line: prefix,
+                    kind: AgentDisplayLineKind::Message {
+                        use_agent_bullet: source_line_index == 0 && consumed_bytes == 0,
+                    },
+                });
+            }
+            output.extend(Self::marker_block_lines(&grouped_markers));
+            remainder = trim_line_leading_spaces(suffix);
+            consumed_bytes = split_at;
+        }
+
+        if !line_is_empty(&remainder) {
+            output.push(AgentDisplayLine {
+                line: remainder,
+                kind: AgentDisplayLineKind::Message {
+                    use_agent_bullet: false,
+                },
+            });
+        }
+        output
+    }
 }
 
 impl HistoryCell for AgentMessageCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        adaptive_wrap_lines(
-            &self.lines,
-            RtOptions::new(width as usize)
-                .initial_indent(if self.is_first_line {
-                    "• ".dim().into()
-                } else {
-                    "  ".into()
-                })
-                .subsequent_indent("  ".into()),
-        )
+        let mut output = Vec::new();
+        for display_line in self.display_source_lines() {
+            let opts = match display_line.kind {
+                AgentDisplayLineKind::Message { use_agent_bullet } => {
+                    RtOptions::new(width as usize)
+                        .initial_indent(if use_agent_bullet && self.is_first_line {
+                            "• ".dim().into()
+                        } else {
+                            "  ".into()
+                        })
+                        .subsequent_indent("  ".into())
+                }
+                AgentDisplayLineKind::BranchChrome => RtOptions::new(width as usize),
+            };
+            push_owned_lines(&adaptive_wrap_line(&display_line.line, opts), &mut output);
+        }
+        output
     }
 
     fn is_stream_continuation(&self) -> bool {
@@ -747,6 +919,93 @@ impl HistoryCell for PlainHistoryCell {
     fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
         self.lines.clone()
     }
+}
+
+fn line_plain_text(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>()
+}
+
+fn split_offset_after_anchor(text: &str, source_byte_offset: usize) -> Option<usize> {
+    text.char_indices()
+        .find_map(|(byte_index, ch)| {
+            let end = byte_index + ch.len_utf8();
+            (source_byte_offset < end).then_some(end)
+        })
+        .or_else(|| (source_byte_offset >= text.len()).then_some(text.len()))
+}
+
+fn split_line_at_byte_offset(
+    line: &Line<'static>,
+    split_at: usize,
+) -> (Line<'static>, Line<'static>) {
+    let mut left_spans = Vec::new();
+    let mut right_spans = Vec::new();
+    let mut consumed = 0usize;
+
+    for span in &line.spans {
+        let span_text = span.content.as_ref();
+        let span_len = span_text.len();
+        if split_at <= consumed {
+            right_spans.push(span.clone());
+        } else if split_at >= consumed + span_len {
+            left_spans.push(span.clone());
+        } else {
+            let split_in_span = split_at - consumed;
+            let left_text = &span_text[..split_in_span];
+            let right_text = &span_text[split_in_span..];
+            if !left_text.is_empty() {
+                left_spans.push(Span::from(left_text.to_string()).set_style(span.style));
+            }
+            if !right_text.is_empty() {
+                right_spans.push(Span::from(right_text.to_string()).set_style(span.style));
+            }
+        }
+        consumed += span_len;
+    }
+
+    (
+        Line::from(left_spans).style(line.style),
+        Line::from(right_spans).style(line.style),
+    )
+}
+
+fn line_is_empty(line: &Line<'_>) -> bool {
+    line.spans
+        .iter()
+        .all(|span| span.content.as_ref().is_empty())
+}
+
+fn trim_line_leading_spaces(line: Line<'static>) -> Line<'static> {
+    let mut spans = Vec::new();
+    let mut trimming = true;
+
+    for span in line.spans {
+        if !trimming {
+            spans.push(span);
+            continue;
+        }
+
+        let trimmed = span.content.trim_start_matches(' ');
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        trimming = false;
+        if trimmed.len() == span.content.len() {
+            spans.push(span);
+        } else {
+            spans.push(Span::from(trimmed.to_string()).set_style(span.style));
+        }
+    }
+
+    Line::from(spans).style(line.style)
+}
+
+fn branch_marker_block_style() -> Style {
+    Style::new().bg(Color::Rgb(19, 53, 74))
 }
 
 #[cfg_attr(debug_assertions, allow(dead_code))]
@@ -3289,6 +3548,53 @@ mod tests {
 
     fn render_transcript(cell: &dyn HistoryCell) -> Vec<String> {
         render_lines(&cell.transcript_lines(u16::MAX))
+    }
+
+    #[test]
+    fn agent_message_cell_renders_inline_branch_marker_snapshot() {
+        let line_text = "One evening, a singer with road dust on her boots stopped near him and asked why he looked so lonely.";
+        let mut cell =
+            AgentMessageCell::new(vec![Line::from(line_text)], /*is_first_line*/ true);
+        cell.add_branch_marker(AgentBranchMarker {
+            source_line_index: 0,
+            source_byte_offset: line_text.find("why").expect("test text should contain why") + 2,
+            branch_depth: 2,
+            branch_id_suffix: "d19d".to_string(),
+            anchor_summary: "he looked so lonely".to_string(),
+        });
+
+        insta::assert_snapshot!(
+            render_lines(&cell.display_lines(/*width*/ 80)).join("\n"),
+            @r###"
+• One evening, a singer with road dust on her boots stopped near him and asked
+  why
+
+
+⎇ Branch d2 · d19d: "...he looked so lonely"
+
+
+  he looked so lonely.
+"###
+        );
+    }
+
+    #[test]
+    fn branch_marker_block_uses_tinted_background() {
+        let marker = AgentBranchMarker {
+            source_line_index: 0,
+            source_byte_offset: 0,
+            branch_depth: 2,
+            branch_id_suffix: "d19d".to_string(),
+            anchor_summary: "he looked so lonely".to_string(),
+        };
+
+        let lines = AgentMessageCell::marker_block_lines(&[&marker]);
+        assert_eq!(lines.len(), 5);
+        assert_eq!(lines[1].line.style.bg, Some(Color::Rgb(19, 53, 74)));
+        assert_eq!(lines[2].line.style.bg, Some(Color::Rgb(19, 53, 74)));
+        assert_eq!(lines[3].line.style.bg, Some(Color::Rgb(19, 53, 74)));
+        assert_eq!(lines[0].line.style.bg, None);
+        assert_eq!(lines[4].line.style.bg, None);
     }
 
     fn image_block(data: &str) -> serde_json::Value {

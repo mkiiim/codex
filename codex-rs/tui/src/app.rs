@@ -110,10 +110,14 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::SkillsListParams;
 use codex_app_server_protocol::SkillsListResponse;
+use codex_app_server_protocol::ThreadForkSnapshot;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadMemoryMode;
 use codex_app_server_protocol::ThreadRollbackResponse;
+use codex_app_server_protocol::ThreadSortKey;
+use codex_app_server_protocol::ThreadSourceKind;
 use codex_app_server_protocol::ThreadStartSource;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnError as AppServerTurnError;
@@ -554,6 +558,16 @@ fn emit_system_bwrap_warning(app_event_tx: &AppEventSender, config: &Config) {
 struct SessionSummary {
     usage_line: Option<String>,
     resume_command: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingDirectChildBranchMarker {
+    assistant_message_index: usize,
+    source_line_index: usize,
+    source_byte_offset: usize,
+    branch_depth: u32,
+    branch_id_suffix: String,
+    anchor_summary: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1113,12 +1127,16 @@ pub(crate) struct App {
     // overwrite a newer toggle, even if the plugin is toggled from different
     // cwd contexts.
     pending_plugin_enabled_writes: HashMap<String, Option<bool>>,
+    pending_direct_child_branch_markers: Vec<PendingDirectChildBranchMarker>,
+    next_assistant_history_cell_index: usize,
+    current_assistant_message_source_line_offset: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PendingTranscriptReply {
     pub(crate) read_position: TranscriptReadPosition,
     pub(crate) fork_snapshot: codex_app_server_protocol::ThreadForkSnapshot,
+    pub(crate) branch_origin_snapshot: codex_app_server_protocol::ThreadForkSnapshot,
     pub(crate) anchor_head_summary: Option<String>,
     pub(crate) anchor_summary: Option<String>,
     pub(crate) current_index: usize,
@@ -3485,6 +3503,7 @@ impl App {
                 branch_depth: None,
                 branch_anchor_head_summary: None,
                 branch_anchor_summary: None,
+                branch_origin_snapshot: None,
                 thread_name: None,
                 model: self.chat_widget.current_model().to_string(),
                 model_provider_id: self.config.model_provider_id.clone(),
@@ -3509,6 +3528,7 @@ impl App {
         session.branch_depth = thread.branch_depth;
         session.branch_anchor_head_summary = thread.branch_anchor_head_summary.clone();
         session.branch_anchor_summary = thread.branch_anchor_summary.clone();
+        session.branch_origin_snapshot = thread.branch_origin_snapshot.clone();
         session.model_provider_id = thread.model_provider.clone();
         session.cwd = thread.cwd.clone();
         session.instruction_source_paths = Vec::new();
@@ -3691,6 +3711,8 @@ impl App {
             /*initial_user_message*/ None,
         );
         self.replace_chat_widget(ChatWidget::new_with_app_event(init));
+        self.prepare_direct_child_branch_markers(app_server, thread_id)
+            .await;
 
         self.reset_for_thread_switch(tui)?;
         self.replay_thread_snapshot(snapshot, !is_replay_only);
@@ -3759,6 +3781,9 @@ impl App {
         self.primary_session_configured = None;
         self.pending_primary_events.clear();
         self.pending_app_server_requests.clear();
+        self.pending_direct_child_branch_markers.clear();
+        self.next_assistant_history_cell_index = 0;
+        self.current_assistant_message_source_line_offset = 0;
         self.chat_widget.set_pending_thread_approvals(Vec::new());
         self.sync_active_agent_label();
     }
@@ -3848,6 +3873,8 @@ impl App {
             initial_user_message,
         );
         self.replace_chat_widget(ChatWidget::new_with_app_event(init));
+        self.prepare_direct_child_branch_markers(app_server, started.session.thread_id)
+            .await;
         self.enqueue_primary_thread_session(started.session, started.turns)
             .await?;
         self.backfill_loaded_subagent_threads(app_server).await;
@@ -4367,8 +4394,13 @@ impl App {
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
+            pending_direct_child_branch_markers: Vec::new(),
+            next_assistant_history_cell_index: 0,
+            current_assistant_message_source_line_offset: 0,
         };
         if let Some(started) = initial_started_thread {
+            app.prepare_direct_child_branch_markers(&mut app_server, started.session.thread_id)
+                .await;
             app.enqueue_primary_thread_session(started.session, started.turns)
                 .await?;
         }
@@ -4893,6 +4925,8 @@ impl App {
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::InsertHistoryCell(cell) => {
+                let mut cell = cell;
+                self.decorate_inserted_agent_history_cell(cell.as_mut());
                 let cell: Arc<dyn HistoryCell> = cell.into();
                 if let Some(Overlay::Transcript(t)) = &mut self.overlay {
                     t.insert_cell(cell.clone());
@@ -6703,41 +6737,45 @@ impl App {
         &self,
         reply_target: &TranscriptReplyTarget,
     ) -> codex_app_server_protocol::ThreadForkSnapshot {
-        let fork_anchor =
-            reply_target
-                .fork_anchor
-                .unwrap_or_else(|| TranscriptForkAnchor::Indexed {
-                    assistant_message_index: self.assistant_message_index_for_transcript_cell(
-                        reply_target.read_position.cell_index,
-                    ),
-                    source_line_index: reply_target.read_position.source_line_index,
-                    source_byte_offset: reply_target.read_position.source_byte_offset,
-                });
-        match fork_anchor {
-            TranscriptForkAnchor::Indexed {
-                assistant_message_index,
-                source_line_index,
-                source_byte_offset,
-            } => codex_app_server_protocol::ThreadForkSnapshot::AssistantReadAnchor {
-                assistant_message_index: u32::try_from(assistant_message_index).unwrap_or(u32::MAX),
-                source_line_index: u32::try_from(source_line_index).unwrap_or(u32::MAX),
-                source_byte_offset: u32::try_from(source_byte_offset).unwrap_or(u32::MAX),
-            },
-            TranscriptForkAnchor::LatestAssistant {
-                source_line_index,
-                source_byte_offset,
-            } => codex_app_server_protocol::ThreadForkSnapshot::LatestAssistantReadAnchor {
-                source_line_index: u32::try_from(source_line_index).unwrap_or(u32::MAX),
-                source_byte_offset: u32::try_from(source_byte_offset).unwrap_or(u32::MAX),
-            },
+        if let Some(fork_anchor) = reply_target.fork_anchor {
+            match fork_anchor {
+                TranscriptForkAnchor::LatestAssistant {
+                    source_line_index,
+                    source_byte_offset,
+                } => {
+                    return codex_app_server_protocol::ThreadForkSnapshot::LatestAssistantReadAnchor {
+                        source_line_index: u32::try_from(source_line_index).unwrap_or(u32::MAX),
+                        source_byte_offset: u32::try_from(source_byte_offset).unwrap_or(u32::MAX),
+                    };
+                }
+            }
+        }
+        self.branch_origin_snapshot_from_transcript_reply_target(reply_target)
+    }
+
+    fn branch_origin_snapshot_from_transcript_reply_target(
+        &self,
+        reply_target: &TranscriptReplyTarget,
+    ) -> codex_app_server_protocol::ThreadForkSnapshot {
+        let assistant_message_index =
+            self.assistant_message_index_for_transcript_cell(reply_target.read_position.cell_index);
+        codex_app_server_protocol::ThreadForkSnapshot::AssistantReadAnchor {
+            assistant_message_index: u32::try_from(assistant_message_index).unwrap_or(u32::MAX),
+            source_line_index: u32::try_from(reply_target.read_position.source_line_index)
+                .unwrap_or(u32::MAX),
+            source_byte_offset: u32::try_from(reply_target.read_position.source_byte_offset)
+                .unwrap_or(u32::MAX),
         }
     }
 
     fn set_pending_transcript_reply(&mut self, reply_target: TranscriptReplyTarget) {
         let fork_snapshot = self.fork_snapshot_from_transcript_reply_target(&reply_target);
+        let branch_origin_snapshot =
+            self.branch_origin_snapshot_from_transcript_reply_target(&reply_target);
         let pending_reply = PendingTranscriptReply {
             read_position: reply_target.read_position,
             fork_snapshot,
+            branch_origin_snapshot,
             anchor_head_summary: reply_target.anchor_head_summary,
             anchor_summary: reply_target.anchor_summary,
             current_index: reply_target.current_index,
@@ -6761,9 +6799,155 @@ impl App {
         self.transcript_cells
             .iter()
             .take(cell_index.saturating_add(1))
-            .filter(|cell| cell.as_any().is::<AgentMessageCell>())
+            .filter_map(|cell| cell.as_any().downcast_ref::<AgentMessageCell>())
+            .filter(|cell| !cell.is_stream_continuation())
             .count()
             .saturating_sub(1)
+    }
+
+    async fn prepare_direct_child_branch_markers(
+        &mut self,
+        app_server: &mut AppServerSession,
+        parent_thread_id: ThreadId,
+    ) {
+        self.next_assistant_history_cell_index = 0;
+        self.current_assistant_message_source_line_offset = 0;
+        match self
+            .direct_child_branch_markers_for_thread(app_server, parent_thread_id)
+            .await
+        {
+            Ok(markers) => {
+                self.pending_direct_child_branch_markers = markers;
+            }
+            Err(err) => {
+                self.pending_direct_child_branch_markers.clear();
+                tracing::warn!(
+                    parent_thread_id = %parent_thread_id,
+                    error = %err,
+                    "failed to load direct child branch markers"
+                );
+            }
+        }
+    }
+
+    async fn direct_child_branch_markers_for_thread(
+        &mut self,
+        app_server: &mut AppServerSession,
+        parent_thread_id: ThreadId,
+    ) -> Result<Vec<PendingDirectChildBranchMarker>> {
+        let parent_thread_id_text = parent_thread_id.to_string();
+        let mut cursor = None;
+        let mut markers = Vec::new();
+        loop {
+            let response = app_server
+                .thread_list(ThreadListParams {
+                    cursor,
+                    limit: Some(100),
+                    sort_key: Some(ThreadSortKey::UpdatedAt),
+                    sort_direction: None,
+                    model_providers: None,
+                    source_kinds: Some(vec![ThreadSourceKind::Cli, ThreadSourceKind::VsCode]),
+                    archived: Some(false),
+                    cwd: None,
+                    search_term: None,
+                })
+                .await?;
+
+            for thread in response.data {
+                if thread.forked_from_id.as_deref() != Some(parent_thread_id_text.as_str()) {
+                    continue;
+                }
+
+                let Some(ThreadForkSnapshot::AssistantReadAnchor {
+                    assistant_message_index,
+                    source_line_index,
+                    source_byte_offset,
+                }) = thread.branch_origin_snapshot
+                else {
+                    continue;
+                };
+
+                markers.push(PendingDirectChildBranchMarker {
+                    assistant_message_index: usize::try_from(assistant_message_index)
+                        .unwrap_or(usize::MAX),
+                    source_line_index: usize::try_from(source_line_index).unwrap_or(usize::MAX),
+                    source_byte_offset: usize::try_from(source_byte_offset).unwrap_or(usize::MAX),
+                    branch_depth: thread.branch_depth.unwrap_or(0),
+                    branch_id_suffix: thread.id.chars().rev().take(4).collect::<String>(),
+                    anchor_summary: thread
+                        .branch_anchor_summary
+                        .or(thread.branch_anchor_head_summary)
+                        .unwrap_or_else(|| "branch".to_string()),
+                });
+            }
+
+            cursor = response.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+
+        for marker in &mut markers {
+            marker.branch_id_suffix = marker.branch_id_suffix.chars().rev().collect();
+        }
+        markers.sort_by_key(|marker| {
+            (
+                marker.assistant_message_index,
+                marker.source_line_index,
+                marker.source_byte_offset,
+                marker.branch_id_suffix.clone(),
+            )
+        });
+        Ok(markers)
+    }
+
+    fn decorate_inserted_agent_history_cell(&mut self, cell: &mut dyn HistoryCell) {
+        let Some(agent_cell) = cell.as_any_mut().downcast_mut::<AgentMessageCell>() else {
+            return;
+        };
+
+        let line_count = agent_cell.source_lines_plain_text().len();
+        let current_index = if agent_cell.is_stream_continuation() {
+            self.next_assistant_history_cell_index.saturating_sub(1)
+        } else {
+            self.current_assistant_message_source_line_offset = 0;
+            let current_index = self.next_assistant_history_cell_index;
+            self.next_assistant_history_cell_index =
+                self.next_assistant_history_cell_index.saturating_add(1);
+            current_index
+        };
+        let current_line_offset = self.current_assistant_message_source_line_offset;
+        let current_line_end = current_line_offset.saturating_add(line_count);
+        let mut matched_markers = Vec::new();
+        self.pending_direct_child_branch_markers.retain(|marker| {
+            match marker.assistant_message_index == current_index
+                && marker.source_line_index >= current_line_offset
+                && marker.source_line_index < current_line_end
+            {
+                true => {
+                    let mut marker = marker.clone();
+                    marker.source_line_index =
+                        marker.source_line_index.saturating_sub(current_line_offset);
+                    matched_markers.push(marker);
+                    false
+                }
+                false => true,
+            }
+        });
+
+        for marker in matched_markers {
+            agent_cell.add_branch_marker(history_cell::AgentBranchMarker {
+                source_line_index: marker.source_line_index,
+                source_byte_offset: marker.source_byte_offset,
+                branch_depth: marker.branch_depth,
+                branch_id_suffix: marker.branch_id_suffix,
+                anchor_summary: marker.anchor_summary,
+            });
+        }
+
+        self.current_assistant_message_source_line_offset = self
+            .current_assistant_message_source_line_offset
+            .saturating_add(line_count);
     }
 
     async fn handle_branch_from_snippet(
@@ -6853,6 +7037,9 @@ impl App {
                     depth: u32::try_from(branch_depth).unwrap_or(u32::MAX),
                     anchor_head_summary,
                     anchor_summary,
+                    origin_snapshot: Some(
+                        self.branch_origin_snapshot_from_transcript_reply_target(&reply_target),
+                    ),
                 }),
             )
             .await
@@ -6981,6 +7168,7 @@ impl App {
                     depth: u32::try_from(branch_depth).unwrap_or(u32::MAX),
                     anchor_head_summary: pending_reply.anchor_head_summary.clone(),
                     anchor_summary: pending_reply.anchor_summary.clone(),
+                    origin_snapshot: Some(pending_reply.branch_origin_snapshot),
                 }),
             )
             .await?;
@@ -10492,6 +10680,7 @@ guardian_approval = true
                     branch_depth: None,
                     branch_anchor_head_summary: None,
                     branch_anchor_summary: None,
+                    branch_origin_snapshot: None,
                     preview: "agent thread".to_string(),
                     ephemeral: false,
                     model_provider: "agent-provider".to_string(),
@@ -10576,6 +10765,7 @@ guardian_approval = true
                     branch_depth: None,
                     branch_anchor_head_summary: None,
                     branch_anchor_summary: None,
+                    branch_origin_snapshot: None,
                     preview: "agent thread".to_string(),
                     ephemeral: false,
                     model_provider: "agent-provider".to_string(),
@@ -11509,6 +11699,9 @@ guardian_approval = true
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
+            pending_direct_child_branch_markers: Vec::new(),
+            next_assistant_history_cell_index: 0,
+            current_assistant_message_source_line_offset: 0,
         }
     }
 
@@ -11570,6 +11763,9 @@ guardian_approval = true
                 pending_primary_events: VecDeque::new(),
                 pending_app_server_requests: PendingAppServerRequests::default(),
                 pending_plugin_enabled_writes: HashMap::new(),
+                pending_direct_child_branch_markers: Vec::new(),
+                next_assistant_history_cell_index: 0,
+                current_assistant_message_source_line_offset: 0,
             },
             rx,
             op_rx,
@@ -11583,6 +11779,7 @@ guardian_approval = true
             branch_depth: None,
             branch_anchor_head_summary: None,
             branch_anchor_summary: None,
+            branch_origin_snapshot: None,
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
@@ -13157,12 +13354,154 @@ guardian_approval = true
                     source_line_index: 0,
                     source_byte_offset: 4,
                 },
+                branch_origin_snapshot:
+                    codex_app_server_protocol::ThreadForkSnapshot::AssistantReadAnchor {
+                        assistant_message_index: 0,
+                        source_line_index: 0,
+                        source_byte_offset: 4,
+                    },
                 anchor_head_summary: None,
                 anchor_summary: None,
                 current_index: 1,
                 total: 2,
             })
         );
+    }
+
+    #[tokio::test]
+    async fn transcript_reply_target_counts_streamed_assistant_cells_as_one_message() {
+        let mut app = make_test_app().await;
+        app.transcript_cells = vec![
+            Arc::new(AgentMessageCell::new(
+                vec![Line::from("First chunk")],
+                /*is_first_line*/ true,
+            )) as Arc<dyn HistoryCell>,
+            Arc::new(AgentMessageCell::new(
+                vec![Line::from("Second chunk")],
+                /*is_first_line*/ false,
+            )) as Arc<dyn HistoryCell>,
+        ];
+
+        app.set_pending_transcript_reply(TranscriptReplyTarget {
+            read_position: TranscriptReadPosition {
+                cell_index: 1,
+                source_line_index: 0,
+                source_byte_offset: 6,
+            },
+            fork_anchor: None,
+            anchor_head_summary: None,
+            anchor_summary: None,
+            current_index: 1,
+            total: 1,
+        });
+
+        assert_eq!(
+            app.pending_transcript_reply()
+                .map(|reply| reply.fork_snapshot),
+            Some(
+                codex_app_server_protocol::ThreadForkSnapshot::AssistantReadAnchor {
+                    assistant_message_index: 0,
+                    source_line_index: 0,
+                    source_byte_offset: 6,
+                }
+            )
+        );
+        assert_eq!(
+            app.pending_transcript_reply()
+                .map(|reply| reply.branch_origin_snapshot),
+            Some(
+                codex_app_server_protocol::ThreadForkSnapshot::AssistantReadAnchor {
+                    assistant_message_index: 0,
+                    source_line_index: 0,
+                    source_byte_offset: 6,
+                }
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn transcript_reply_target_uses_latest_assistant_snapshot_for_forking() {
+        let mut app = make_test_app().await;
+        app.set_pending_transcript_reply(TranscriptReplyTarget {
+            read_position: TranscriptReadPosition {
+                cell_index: 2,
+                source_line_index: 3,
+                source_byte_offset: 17,
+            },
+            fork_anchor: Some(TranscriptForkAnchor::LatestAssistant {
+                source_line_index: 0,
+                source_byte_offset: 41,
+            }),
+            anchor_head_summary: None,
+            anchor_summary: None,
+            current_index: 1,
+            total: 1,
+        });
+
+        assert_eq!(
+            app.pending_transcript_reply()
+                .map(|reply| reply.fork_snapshot),
+            Some(
+                codex_app_server_protocol::ThreadForkSnapshot::LatestAssistantReadAnchor {
+                    source_line_index: 0,
+                    source_byte_offset: 41,
+                }
+            )
+        );
+        assert_eq!(
+            app.pending_transcript_reply()
+                .map(|reply| reply.branch_origin_snapshot),
+            Some(
+                codex_app_server_protocol::ThreadForkSnapshot::AssistantReadAnchor {
+                    assistant_message_index: 0,
+                    source_line_index: 3,
+                    source_byte_offset: 17,
+                }
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_child_branch_markers_attach_to_stream_continuation_cells() {
+        let mut app = make_test_app().await;
+        app.pending_direct_child_branch_markers = vec![PendingDirectChildBranchMarker {
+            assistant_message_index: 0,
+            source_line_index: 3,
+            source_byte_offset: 4,
+            branch_depth: 6,
+            branch_id_suffix: "d19d".to_string(),
+            anchor_summary: "branch marker".to_string(),
+        }];
+
+        let mut first_cell = AgentMessageCell::new(
+            vec![Line::from("line 0"), Line::from("line 1")],
+            /*is_first_line*/ true,
+        );
+        app.decorate_inserted_agent_history_cell(&mut first_cell);
+        assert!(first_cell.display_lines(u16::MAX).iter().all(|line| {
+            line.spans
+                .iter()
+                .all(|span| !span.content.contains("Branch d6"))
+        }));
+
+        let mut continuation_cell = AgentMessageCell::new(
+            vec![Line::from("line 2"), Line::from("line 3 marker")],
+            /*is_first_line*/ false,
+        );
+        app.decorate_inserted_agent_history_cell(&mut continuation_cell);
+        let rendered = continuation_cell
+            .display_lines(u16::MAX)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("⎇ Branch d6 · d19d: \"...branch marker\""));
+        assert!(app.pending_direct_child_branch_markers.is_empty());
     }
 
     #[tokio::test]
@@ -13193,6 +13532,7 @@ guardian_approval = true
                     branch_depth: None,
                     branch_anchor_head_summary: None,
                     branch_anchor_summary: None,
+                    branch_origin_snapshot: None,
                     preview: String::new(),
                     ephemeral: false,
                     model_provider: "openai".to_string(),

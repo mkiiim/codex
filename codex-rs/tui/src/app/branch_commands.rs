@@ -294,7 +294,7 @@ fn branch_relation_glyph(role: BranchNavigatorRole) -> &'static str {
         BranchNavigatorRole::Main => "•",
         BranchNavigatorRole::Ancestor | BranchNavigatorRole::Parent => "↑",
         BranchNavigatorRole::Current => "→",
-        BranchNavigatorRole::Child => "↓",
+        BranchNavigatorRole::Child => "⎇",
     }
 }
 
@@ -469,7 +469,7 @@ mod tests {
         assert_eq!(branch_relation_glyph(BranchNavigatorRole::Main), "•");
         assert_eq!(branch_relation_glyph(BranchNavigatorRole::Parent), "↑");
         assert_eq!(branch_relation_glyph(BranchNavigatorRole::Current), "→");
-        assert_eq!(branch_relation_glyph(BranchNavigatorRole::Child), "↓");
+        assert_eq!(branch_relation_glyph(BranchNavigatorRole::Child), "⎇");
     }
 
     #[test]

@@ -811,6 +811,17 @@
             "null"
           ]
         },
+        "branchOriginSnapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadForkSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Stable parent-thread anchor location where this branch diverged."
+        },
         "cliVersion": {
           "description": "Version of the CLI that created the thread.",
           "type": "string"
@@ -925,6 +936,88 @@
         "waitingOnUserInput"
       ],
       "type": "string"
+    },
+    "ThreadForkSnapshot": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "interrupted"
+              ],
+              "title": "InterruptedThreadForkSnapshotType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "InterruptedThreadForkSnapshot",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "assistantMessageIndex": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "sourceByteOffset": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "sourceLineIndex": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "assistantReadAnchor"
+              ],
+              "title": "AssistantReadAnchorThreadForkSnapshotType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "assistantMessageIndex",
+            "sourceByteOffset",
+            "sourceLineIndex",
+            "type"
+          ],
+          "title": "AssistantReadAnchorThreadForkSnapshot",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "sourceByteOffset": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "sourceLineIndex": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "latestAssistantReadAnchor"
+              ],
+              "title": "LatestAssistantReadAnchorThreadForkSnapshotType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sourceByteOffset",
+            "sourceLineIndex",
+            "type"
+          ],
+          "title": "LatestAssistantReadAnchorThreadForkSnapshot",
+          "type": "object"
+        }
+      ]
     },
     "ThreadId": {
       "type": "string"

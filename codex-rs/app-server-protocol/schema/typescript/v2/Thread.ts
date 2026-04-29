@@ -4,6 +4,7 @@
 import type { AbsolutePathBuf } from "../AbsolutePathBuf";
 import type { GitInfo } from "./GitInfo";
 import type { SessionSource } from "./SessionSource";
+import type { ThreadForkSnapshot } from "./ThreadForkSnapshot";
 import type { ThreadStatus } from "./ThreadStatus";
 import type { Turn } from "./Turn";
 
@@ -24,6 +25,10 @@ branchAnchorHeadSummary: string | null,
  * Short UI label for the end of the branch anchor, usually the final few words at the read point.
  */
 branchAnchorSummary: string | null,
+/**
+ * Stable parent-thread anchor location where this branch diverged.
+ */
+branchOriginSnapshot: ThreadForkSnapshot | null,
 /**
  * Usually the first user message in the thread, if available.
  */

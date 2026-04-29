@@ -305,6 +305,7 @@ use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::BranchContext;
+use codex_protocol::protocol::BranchOrigin;
 use codex_protocol::protocol::ConversationAudioParams;
 use codex_protocol::protocol::ConversationStartParams;
 use codex_protocol::protocol::ConversationStartTransport;
@@ -4802,6 +4803,7 @@ impl CodexMessageProcessor {
             branch_depth,
             branch_anchor_head_summary,
             branch_anchor_summary,
+            branch_origin_snapshot,
             model,
             model_provider,
             service_tier,
@@ -4815,10 +4817,15 @@ impl CodexMessageProcessor {
             ephemeral,
             persist_extended_history,
         } = params;
+        let branch_origin = branch_origin_snapshot
+            .as_ref()
+            .or(snapshot.as_ref())
+            .and_then(branch_origin_from_api_thread_fork_snapshot);
         let branch_context = branch_depth.map(|depth| BranchContext {
             depth,
             anchor_head_summary: branch_anchor_head_summary.clone(),
             anchor_summary: branch_anchor_summary,
+            origin: branch_origin,
         });
 
         let snapshot = match snapshot.unwrap_or(ApiThreadForkSnapshot::Interrupted) {
@@ -5078,6 +5085,10 @@ impl CodexMessageProcessor {
                 thread.branch_depth = Some(branch_context.depth);
                 thread.branch_anchor_head_summary = branch_context.anchor_head_summary.clone();
                 thread.branch_anchor_summary = branch_context.anchor_summary.clone();
+                thread.branch_origin_snapshot = branch_context
+                    .origin
+                    .as_ref()
+                    .map(thread_fork_snapshot_from_branch_origin);
             }
             if let Err(message) = populate_thread_turns(
                 &mut thread,
@@ -9645,6 +9656,7 @@ fn thread_from_stored_thread(
         branch_depth: None,
         branch_anchor_head_summary: None,
         branch_anchor_summary: None,
+        branch_origin_snapshot: None,
         preview: thread.first_user_message.unwrap_or(thread.preview),
         ephemeral: false,
         model_provider: if thread.model_provider.is_empty() {
@@ -9996,6 +10008,54 @@ async fn apply_branch_context_from_rollout(thread: &mut Thread, path: &Path) {
         thread.branch_depth = Some(branch_context.depth);
         thread.branch_anchor_head_summary = branch_context.anchor_head_summary;
         thread.branch_anchor_summary = branch_context.anchor_summary;
+        thread.branch_origin_snapshot = branch_context
+            .origin
+            .map(|origin| thread_fork_snapshot_from_branch_origin(&origin));
+    }
+}
+
+fn branch_origin_from_api_thread_fork_snapshot(
+    snapshot: &ApiThreadForkSnapshot,
+) -> Option<BranchOrigin> {
+    match snapshot {
+        ApiThreadForkSnapshot::Interrupted => None,
+        ApiThreadForkSnapshot::AssistantReadAnchor {
+            assistant_message_index,
+            source_line_index,
+            source_byte_offset,
+        } => Some(BranchOrigin::AssistantReadAnchor {
+            assistant_message_index: *assistant_message_index,
+            source_line_index: *source_line_index,
+            source_byte_offset: *source_byte_offset,
+        }),
+        ApiThreadForkSnapshot::LatestAssistantReadAnchor {
+            source_line_index,
+            source_byte_offset,
+        } => Some(BranchOrigin::LatestAssistantReadAnchor {
+            source_line_index: *source_line_index,
+            source_byte_offset: *source_byte_offset,
+        }),
+    }
+}
+
+fn thread_fork_snapshot_from_branch_origin(origin: &BranchOrigin) -> ApiThreadForkSnapshot {
+    match origin {
+        BranchOrigin::AssistantReadAnchor {
+            assistant_message_index,
+            source_line_index,
+            source_byte_offset,
+        } => ApiThreadForkSnapshot::AssistantReadAnchor {
+            assistant_message_index: *assistant_message_index,
+            source_line_index: *source_line_index,
+            source_byte_offset: *source_byte_offset,
+        },
+        BranchOrigin::LatestAssistantReadAnchor {
+            source_line_index,
+            source_byte_offset,
+        } => ApiThreadForkSnapshot::LatestAssistantReadAnchor {
+            source_line_index: *source_line_index,
+            source_byte_offset: *source_byte_offset,
+        },
     }
 }
 
@@ -10106,6 +10166,7 @@ fn build_thread_from_snapshot(
         branch_depth: None,
         branch_anchor_head_summary: None,
         branch_anchor_summary: None,
+        branch_origin_snapshot: None,
         preview: String::new(),
         ephemeral: config_snapshot.ephemeral,
         model_provider: config_snapshot.model_provider_id.clone(),
@@ -10164,6 +10225,7 @@ pub(crate) fn summary_to_thread(
         branch_depth: None,
         branch_anchor_head_summary: None,
         branch_anchor_summary: None,
+        branch_origin_snapshot: None,
         preview,
         ephemeral: false,
         model_provider,

@@ -116,6 +116,7 @@ mod tests {
             branch_depth: None,
             branch_anchor_head_summary: None,
             branch_anchor_summary: None,
+            branch_origin_snapshot: None,
             preview: String::new(),
             ephemeral: false,
             model_provider: "openai".to_string(),

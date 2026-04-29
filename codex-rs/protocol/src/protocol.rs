@@ -2790,12 +2790,28 @@ pub struct SessionStateUpdate {
 
 /// UI-visible metadata describing where a conversational branch was created.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+pub enum BranchOrigin {
+    AssistantReadAnchor {
+        assistant_message_index: u32,
+        source_line_index: u32,
+        source_byte_offset: u32,
+    },
+    LatestAssistantReadAnchor {
+        source_line_index: u32,
+        source_byte_offset: u32,
+    },
+}
+
+/// UI-visible metadata describing where a conversational branch was created.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
 pub struct BranchContext {
     pub depth: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor_head_summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<BranchOrigin>,
 }
 
 /// SessionMeta contains session-level data that doesn't correspond to a specific turn.

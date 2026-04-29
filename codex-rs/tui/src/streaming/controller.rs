@@ -104,11 +104,19 @@ impl StreamController {
         if lines.is_empty() {
             return None;
         }
-        Some(Box::new(history_cell::AgentMessageCell::new(lines, {
+        let raw_markdown = self.state.collector.raw_buffer().to_string();
+        let is_first_line = {
             let header_emitted = self.header_emitted;
             self.header_emitted = true;
             !header_emitted
-        })))
+        };
+        Some(Box::new(
+            history_cell::AgentMessageCell::new_with_raw_markdown(
+                lines,
+                is_first_line,
+                Some(raw_markdown),
+            ),
+        ))
     }
 }
 

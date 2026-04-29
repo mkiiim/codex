@@ -6748,6 +6748,18 @@ impl App {
                         source_byte_offset: u32::try_from(source_byte_offset).unwrap_or(u32::MAX),
                     };
                 }
+                TranscriptForkAnchor::AssistantMessage {
+                    assistant_message_index,
+                    source_line_index,
+                    source_byte_offset,
+                } => {
+                    return codex_app_server_protocol::ThreadForkSnapshot::AssistantReadAnchor {
+                        assistant_message_index: u32::try_from(assistant_message_index)
+                            .unwrap_or(u32::MAX),
+                        source_line_index: u32::try_from(source_line_index).unwrap_or(u32::MAX),
+                        source_byte_offset: u32::try_from(source_byte_offset).unwrap_or(u32::MAX),
+                    };
+                }
             }
         }
         self.branch_origin_snapshot_from_transcript_reply_target(reply_target)
@@ -6978,12 +6990,13 @@ impl App {
             }
             Err(BranchSnippetError::NoMatch) => {
                 self.chat_widget.add_error_message(
-                    "Could not find that text in the latest assistant response.".to_string(),
+                    "Could not find that text in an assistant response in this conversation."
+                        .to_string(),
                 );
             }
             Err(BranchSnippetError::AmbiguousMatch) => {
                 self.chat_widget.add_error_message(
-                    "That text appears more than once in the latest assistant response. Copy a longer snippet.".to_string(),
+                    "That text appears more than once across assistant responses in this conversation. Copy a longer snippet.".to_string(),
                 );
             }
             Err(BranchSnippetError::NoAnchor) => {

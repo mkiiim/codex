@@ -461,6 +461,7 @@ impl HistoryCell for ReasoningSummaryCell {
 pub(crate) struct AgentMessageCell {
     lines: Vec<Line<'static>>,
     is_first_line: bool,
+    raw_markdown: Option<String>,
     branch_markers: Vec<AgentBranchMarker>,
 }
 
@@ -486,12 +487,26 @@ struct AgentDisplayLine {
 }
 
 impl AgentMessageCell {
+    #[cfg(test)]
     pub(crate) fn new(lines: Vec<Line<'static>>, is_first_line: bool) -> Self {
+        Self::new_with_raw_markdown(lines, is_first_line, /*raw_markdown*/ None)
+    }
+
+    pub(crate) fn new_with_raw_markdown(
+        lines: Vec<Line<'static>>,
+        is_first_line: bool,
+        raw_markdown: Option<String>,
+    ) -> Self {
         Self {
             lines,
             is_first_line,
+            raw_markdown,
             branch_markers: Vec::new(),
         }
+    }
+
+    pub(crate) fn raw_markdown_text(&self) -> Option<&str> {
+        self.raw_markdown.as_deref()
     }
 
     pub(crate) fn add_branch_marker(&mut self, marker: AgentBranchMarker) {

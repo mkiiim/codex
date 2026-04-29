@@ -443,6 +443,7 @@ impl SearchState {
 struct Row {
     path: Option<PathBuf>,
     preview: String,
+    branch_preview: Option<String>,
     thread_id: Option<ThreadId>,
     thread_name: Option<String>,
     created_at: Option<DateTime<Utc>>,
@@ -466,11 +467,21 @@ impl Row {
     }
 
     fn display_preview(&self) -> &str {
-        self.thread_name.as_deref().unwrap_or(&self.preview)
+        self.thread_name
+            .as_deref()
+            .or(self.branch_preview.as_deref())
+            .unwrap_or(&self.preview)
     }
 
     fn matches_query(&self, query: &str) -> bool {
         if self.preview.to_lowercase().contains(query) {
+            return true;
+        }
+        if self
+            .branch_preview
+            .as_ref()
+            .is_some_and(|preview| preview.to_lowercase().contains(query))
+        {
             return true;
         }
         if let Some(thread_name) = self.thread_name.as_ref()
@@ -972,6 +983,11 @@ fn row_from_app_server_thread(thread: Thread) -> Option<Row> {
         } else {
             preview.to_string()
         },
+        branch_preview: branch_preview_label(
+            thread.branch_depth,
+            thread.branch_anchor_head_summary.as_deref(),
+            thread.branch_anchor_summary.as_deref(),
+        ),
         thread_id: Some(thread_id),
         thread_name: thread.name,
         created_at: chrono::DateTime::from_timestamp(thread.created_at, 0)
@@ -980,6 +996,26 @@ fn row_from_app_server_thread(thread: Thread) -> Option<Row> {
             .map(|dt| dt.with_timezone(&Utc)),
         cwd: Some(thread.cwd.to_path_buf()),
         git_branch: thread.git_info.and_then(|git_info| git_info.branch),
+    })
+}
+
+fn branch_preview_label(
+    depth: Option<u32>,
+    anchor_head_summary: Option<&str>,
+    anchor_summary: Option<&str>,
+) -> Option<String> {
+    let depth = depth?;
+    let summary = if let Some(head) = anchor_head_summary.filter(|head| !head.is_empty()) {
+        format!("\"{head}...\"")
+    } else if let Some(tail) = anchor_summary.filter(|tail| !tail.is_empty()) {
+        format!("\"...{tail}\"")
+    } else {
+        String::new()
+    };
+    Some(if summary.is_empty() {
+        format!("⎇ d{depth}")
+    } else {
+        format!("⎇ d{depth} {summary}")
     })
 }
 
@@ -1532,6 +1568,7 @@ mod tests {
         Row {
             path: Some(PathBuf::from(path)),
             preview: preview.to_string(),
+            branch_preview: None,
             thread_id: None,
             thread_name: None,
             created_at: Some(timestamp),
@@ -1546,6 +1583,7 @@ mod tests {
         let row = Row {
             path: Some(PathBuf::from("/tmp/a.jsonl")),
             preview: String::from("first message"),
+            branch_preview: Some(String::from("⎇ d2 \"...anchor\"")),
             thread_id: None,
             thread_name: Some(String::from("My session")),
             created_at: None,
@@ -1555,6 +1593,23 @@ mod tests {
         };
 
         assert_eq!(row.display_preview(), "My session");
+    }
+
+    #[test]
+    fn row_display_preview_uses_branch_preview_when_present() {
+        let row = Row {
+            path: Some(PathBuf::from("/tmp/a.jsonl")),
+            preview: String::from("first message"),
+            branch_preview: Some(String::from("⎇ d2 \"...anchor\"")),
+            thread_id: None,
+            thread_name: None,
+            created_at: None,
+            updated_at: None,
+            cwd: None,
+            git_branch: None,
+        };
+
+        assert_eq!(row.display_preview(), "⎇ d2 \"...anchor\"");
     }
 
     #[test]
@@ -1605,6 +1660,7 @@ mod tests {
         let row = Row {
             path: None,
             preview: String::from("remote session"),
+            branch_preview: None,
             thread_id: Some(ThreadId::new()),
             thread_name: None,
             created_at: None,
@@ -1628,7 +1684,7 @@ mod tests {
             FrameRequester::test_dummy(),
             loader,
             ProviderFilter::MatchDefault(String::from("openai")),
-            /*show_all*/ true,
+            /*show_all*/ false,
             /*filter_cwd*/ None,
             SessionPickerAction::Resume,
         );
@@ -1638,6 +1694,7 @@ mod tests {
             Row {
                 path: Some(PathBuf::from("/tmp/a.jsonl")),
                 preview: String::from("Fix resume picker timestamps"),
+                branch_preview: None,
                 thread_id: None,
                 thread_name: None,
                 created_at: Some(now - Duration::minutes(16)),
@@ -1648,6 +1705,7 @@ mod tests {
             Row {
                 path: Some(PathBuf::from("/tmp/b.jsonl")),
                 preview: String::from("Investigate lazy pagination cap"),
+                branch_preview: None,
                 thread_id: None,
                 thread_name: None,
                 created_at: Some(now - Duration::hours(1)),
@@ -1658,6 +1716,7 @@ mod tests {
             Row {
                 path: Some(PathBuf::from("/tmp/c.jsonl")),
                 preview: String::from("Explain the codebase"),
+                branch_preview: None,
                 thread_id: None,
                 thread_name: None,
                 created_at: Some(now - Duration::hours(2)),
@@ -1694,6 +1753,67 @@ mod tests {
 
         let snapshot = terminal.backend().to_string();
         assert_snapshot!("resume_picker_table", snapshot);
+    }
+
+    #[test]
+    fn resume_table_snapshot_with_branch_preview() {
+        use crate::custom_terminal::Terminal;
+        use crate::test_backend::VT100Backend;
+        use ratatui::layout::Constraint;
+        use ratatui::layout::Layout;
+
+        let loader: PageLoader = Arc::new(|_| {});
+        let mut state = PickerState::new(
+            FrameRequester::test_dummy(),
+            loader,
+            ProviderFilter::MatchDefault(String::from("openai")),
+            /*show_all*/ false,
+            /*filter_cwd*/ None,
+            SessionPickerAction::Resume,
+        );
+
+        let now = Utc::now();
+        let rows = vec![Row {
+            path: Some(PathBuf::from("/tmp/branch.jsonl")),
+            preview: String::from("Give me a numbered list of six short lines about rust for UI"),
+            branch_preview: Some(String::from(
+                "⎇ d6 \"QuickBooks does invoicing, and that is one of...\"",
+            )),
+            thread_id: None,
+            thread_name: None,
+            created_at: Some(now - Duration::hours(2)),
+            updated_at: Some(now - Duration::minutes(4)),
+            cwd: None,
+            git_branch: Some(String::from("tui/line-branching")),
+        }];
+        state.all_rows = rows.clone();
+        state.filtered_rows = rows;
+        state.view_rows = Some(1);
+        state.selected = 0;
+        state.scroll_top = 0;
+        state.update_view_rows(/*rows*/ 1);
+
+        state.relative_time_reference = Some(now);
+        let metrics = calculate_column_metrics(&state.filtered_rows, state.show_all, now);
+
+        let width: u16 = 100;
+        let height: u16 = 4;
+        let backend = VT100Backend::new(width, height);
+        let mut terminal = Terminal::with_options(backend).expect("terminal");
+        terminal.set_viewport_area(Rect::new(0, 0, width, height));
+
+        {
+            let mut frame = terminal.get_frame();
+            let area = frame.area();
+            let segments =
+                Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
+            render_column_headers(&mut frame, segments[0], &metrics, state.sort_key);
+            render_list(&mut frame, segments[1], &state, &metrics);
+        }
+        terminal.flush().expect("flush");
+
+        let snapshot = terminal.backend().to_string();
+        assert_snapshot!("resume_picker_branch_preview", snapshot);
     }
 
     #[test]
@@ -1960,6 +2080,7 @@ mod tests {
         let row = Row {
             path: Some(PathBuf::from("/tmp/missing.jsonl")),
             preview: String::from("missing metadata"),
+            branch_preview: None,
             thread_id: None,
             thread_name: None,
             created_at: None,
@@ -1999,6 +2120,7 @@ mod tests {
         let row = Row {
             path: None,
             preview: String::from("pathless thread"),
+            branch_preview: None,
             thread_id: Some(thread_id),
             thread_name: None,
             created_at: None,
@@ -2055,6 +2177,48 @@ mod tests {
         assert_eq!(row.path, None);
         assert_eq!(row.thread_id, Some(thread_id));
         assert_eq!(row.thread_name, Some(String::from("Named thread")));
+    }
+
+    #[test]
+    fn app_server_row_uses_branch_preview_for_branch_threads() {
+        let thread = Thread {
+            id: ThreadId::new().to_string(),
+            forked_from_id: Some(ThreadId::new().to_string()),
+            branch_depth: Some(6),
+            branch_anchor_head_summary: Some(String::from(
+                "QuickBooks does invoicing, and that is one of",
+            )),
+            branch_anchor_summary: Some(String::from("includes Invoice and payments.")),
+            branch_origin_snapshot: None,
+            preview: String::from("Give me a numbered list of six short lines about rust for UI"),
+            ephemeral: false,
+            model_provider: String::from("openai"),
+            created_at: 1,
+            updated_at: 2,
+            status: codex_app_server_protocol::ThreadStatus::Idle,
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: String::from("0.0.0"),
+            source: codex_app_server_protocol::SessionSource::Cli,
+            agent_nickname: None,
+            agent_role: None,
+            git_info: None,
+            name: None,
+            turns: Vec::new(),
+        };
+
+        let row = row_from_app_server_thread(thread).expect("row should be preserved");
+
+        assert_eq!(
+            row.branch_preview,
+            Some(String::from(
+                "⎇ d6 \"QuickBooks does invoicing, and that is one of...\""
+            ))
+        );
+        assert_eq!(
+            row.display_preview(),
+            "⎇ d6 \"QuickBooks does invoicing, and that is one of...\""
+        );
     }
 
     #[tokio::test]

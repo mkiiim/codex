@@ -61,6 +61,11 @@ pub(crate) enum TranscriptForkAnchor {
         source_line_index: usize,
         source_byte_offset: usize,
     },
+    AssistantMessage {
+        assistant_message_index: usize,
+        source_line_index: usize,
+        source_byte_offset: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

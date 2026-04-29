@@ -85,9 +85,7 @@ impl SlashCommand {
             SlashCommand::Resume => "resume a saved chat",
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
-            SlashCommand::BranchFrom => {
-                "create a branch from copied text in the latest assistant response"
-            }
+            SlashCommand::BranchFrom => "create a branch from copied text in an assistant response",
             SlashCommand::BranchInfo => "show current branch metadata",
             SlashCommand::BranchList => "list child branches from this chat",
             // SlashCommand::Undo => "ask Codex to undo a turn",

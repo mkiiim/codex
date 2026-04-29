@@ -29,13 +29,233 @@ pub(crate) fn locate_branch_snippet(
         return Err(BranchSnippetError::EmptySnippet);
     }
 
-    let Some(response) = latest_assistant_response(cells) else {
+    let responses = assistant_responses(cells);
+    if responses.is_empty() {
         return Err(BranchSnippetError::NoAssistantResponse);
-    };
+    }
 
+    let mut matched_target = None;
+    for (response_index, response) in responses.iter().enumerate() {
+        let target = match locate_branch_snippet_in_response(
+            cells,
+            response,
+            response_index + 1 == responses.len(),
+            raw_assistant_markdown,
+            &snippets,
+            width,
+        ) {
+            Ok(Some(target)) => target,
+            Ok(None) => continue,
+            Err(err) => return Err(err),
+        };
+        if matched_target.is_some() {
+            return Err(BranchSnippetError::AmbiguousMatch);
+        }
+        matched_target = Some(target);
+    }
+
+    matched_target.ok_or(BranchSnippetError::NoMatch)
+}
+
+struct AssistantResponse<'a> {
+    assistant_message_index: usize,
+    cells: Vec<(usize, &'a AgentMessageCell)>,
+}
+
+impl AssistantResponse<'_> {
+    fn source_lines(&self) -> Vec<String> {
+        self.cells
+            .iter()
+            .flat_map(|(_, cell)| cell.source_lines_plain_text())
+            .collect()
+    }
+
+    fn cell_position(
+        &self,
+        response_line_index: usize,
+    ) -> Option<(usize, &AgentMessageCell, usize)> {
+        let mut remaining = response_line_index;
+        for (cell_index, cell) in &self.cells {
+            let line_count = cell.source_lines_plain_text().len();
+            if remaining < line_count {
+                return Some((*cell_index, cell, remaining));
+            }
+            remaining = remaining.saturating_sub(line_count);
+        }
+        None
+    }
+
+    fn raw_markdown_text<'a>(
+        &'a self,
+        latest_raw_assistant_markdown: Option<&'a str>,
+        is_latest_response: bool,
+    ) -> Option<&'a str> {
+        self.cells
+            .iter()
+            .rev()
+            .find_map(|(_, cell)| cell.raw_markdown_text())
+            .or_else(|| {
+                is_latest_response
+                    .then_some(latest_raw_assistant_markdown)
+                    .flatten()
+            })
+    }
+
+    fn latest_fork_anchor(
+        &self,
+        raw_assistant_markdown: &str,
+        snippets: &[NormalizedText],
+    ) -> Option<TranscriptForkAnchor> {
+        let raw_lines = raw_assistant_markdown
+            .split('\n')
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let normalized_raw = NormalizedText::new(&raw_lines);
+        let match_range = find_branch_snippet_match(&normalized_raw.text, snippets).ok()?;
+        let (match_end_line_index, _) = normalized_raw
+            .mapping
+            .get(match_range.end.saturating_sub(1))
+            .copied()?;
+        let source_line_index = structure_end_line(&raw_lines, match_end_line_index);
+        let source_byte_offset =
+            absolute_line_end_anchor(raw_assistant_markdown, &raw_lines, source_line_index)?;
+
+        Some(TranscriptForkAnchor::LatestAssistant {
+            source_line_index: 0,
+            source_byte_offset,
+        })
+    }
+
+    fn assistant_fork_anchor(
+        &self,
+        raw_assistant_markdown: &str,
+        snippets: &[NormalizedText],
+    ) -> Option<TranscriptForkAnchor> {
+        let raw_lines = raw_assistant_markdown
+            .split('\n')
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let normalized_raw = NormalizedText::new(&raw_lines);
+        let match_range = find_branch_snippet_match(&normalized_raw.text, snippets).ok()?;
+        let (match_end_line_index, _) = normalized_raw
+            .mapping
+            .get(match_range.end.saturating_sub(1))
+            .copied()?;
+        let source_line_index = structure_end_line(&raw_lines, match_end_line_index);
+        let source_byte_offset =
+            absolute_line_end_anchor(raw_assistant_markdown, &raw_lines, source_line_index)?;
+
+        Some(TranscriptForkAnchor::AssistantMessage {
+            assistant_message_index: self.assistant_message_index,
+            source_line_index: 0,
+            source_byte_offset,
+        })
+    }
+}
+
+fn assistant_responses(cells: &[Arc<dyn HistoryCell>]) -> Vec<AssistantResponse<'_>> {
+    let mut responses = Vec::new();
+    let mut current_cells = Vec::new();
+
+    for (cell_index, cell) in cells.iter().enumerate() {
+        let Some(agent_cell) = cell.as_any().downcast_ref::<AgentMessageCell>() else {
+            if !current_cells.is_empty() {
+                responses.push(AssistantResponse {
+                    assistant_message_index: responses.len(),
+                    cells: current_cells,
+                });
+                current_cells = Vec::new();
+            }
+            continue;
+        };
+
+        if !agent_cell.is_stream_continuation() && !current_cells.is_empty() {
+            responses.push(AssistantResponse {
+                assistant_message_index: responses.len(),
+                cells: current_cells,
+            });
+            current_cells = Vec::new();
+        }
+        current_cells.push((cell_index, agent_cell));
+    }
+
+    if !current_cells.is_empty() {
+        responses.push(AssistantResponse {
+            assistant_message_index: responses.len(),
+            cells: current_cells,
+        });
+    }
+
+    responses
+}
+
+fn absolute_line_end_anchor(
+    raw_text: &str,
+    raw_lines: &[String],
+    line_index: usize,
+) -> Option<usize> {
+    let line_start = raw_lines
+        .iter()
+        .take(line_index)
+        .map(|line| line.len() + 1)
+        .sum::<usize>();
+    let line = raw_lines.get(line_index)?;
+    let line_anchor = AgentMessageCell::transcript_anchor_byte_offset(line, &(0..line.len()))?;
+    let absolute_anchor = line_start + line_anchor;
+    (absolute_anchor < raw_text.len()).then_some(absolute_anchor)
+}
+
+fn latest_assistant_anchor_from_lines(
+    source_lines: &[String],
+    line_index: usize,
+) -> Option<TranscriptForkAnchor> {
+    let line_start = source_lines
+        .iter()
+        .take(line_index)
+        .map(|line| line.len() + 1)
+        .sum::<usize>();
+    let line = source_lines.get(line_index)?;
+    let line_anchor = AgentMessageCell::transcript_anchor_byte_offset(line, &(0..line.len()))?;
+    Some(TranscriptForkAnchor::LatestAssistant {
+        source_line_index: 0,
+        source_byte_offset: line_start + line_anchor,
+    })
+}
+
+fn assistant_anchor_from_lines(
+    assistant_message_index: usize,
+    source_lines: &[String],
+    line_index: usize,
+) -> Option<TranscriptForkAnchor> {
+    let line_start = source_lines
+        .iter()
+        .take(line_index)
+        .map(|line| line.len() + 1)
+        .sum::<usize>();
+    let line = source_lines.get(line_index)?;
+    let line_anchor = AgentMessageCell::transcript_anchor_byte_offset(line, &(0..line.len()))?;
+    Some(TranscriptForkAnchor::AssistantMessage {
+        assistant_message_index,
+        source_line_index: 0,
+        source_byte_offset: line_start + line_anchor,
+    })
+}
+
+fn locate_branch_snippet_in_response(
+    cells: &[Arc<dyn HistoryCell>],
+    response: &AssistantResponse<'_>,
+    is_latest_response: bool,
+    latest_raw_assistant_markdown: Option<&str>,
+    snippets: &[NormalizedText],
+    width: u16,
+) -> Result<Option<TranscriptReplyTarget>, BranchSnippetError> {
     let source_lines = response.source_lines();
     let normalized_source = NormalizedText::new(&source_lines);
-    let match_range = find_branch_snippet_match(&normalized_source.text, &snippets)?;
+    let match_range = match find_branch_snippet_match(&normalized_source.text, snippets) {
+        Ok(range) => range,
+        Err(BranchSnippetError::NoMatch) => return Ok(None),
+        Err(err) => return Err(err),
+    };
     let (match_start_line_index, _) = normalized_source
         .mapping
         .get(match_range.start)
@@ -83,143 +303,42 @@ pub(crate) fn locate_branch_snippet(
             },
             |index| index + 1,
         );
+    let fork_anchor = if let Some(raw_markdown) =
+        response.raw_markdown_text(latest_raw_assistant_markdown, is_latest_response)
+    {
+        if is_latest_response {
+            response
+                .latest_fork_anchor(raw_markdown, snippets)
+                .or_else(|| latest_assistant_anchor_from_lines(&source_lines, source_line_index))
+        } else {
+            response
+                .assistant_fork_anchor(raw_markdown, snippets)
+                .or_else(|| {
+                    assistant_anchor_from_lines(
+                        response.assistant_message_index,
+                        &source_lines,
+                        source_line_index,
+                    )
+                })
+        }
+    } else if is_latest_response {
+        latest_assistant_anchor_from_lines(&source_lines, source_line_index)
+    } else {
+        assistant_anchor_from_lines(
+            response.assistant_message_index,
+            &source_lines,
+            source_line_index,
+        )
+    };
 
-    Ok(TranscriptReplyTarget {
+    Ok(Some(TranscriptReplyTarget {
         read_position,
-        fork_anchor: raw_assistant_markdown
-            .and_then(|markdown| response.fork_anchor(markdown, &snippets))
-            .or_else(|| latest_assistant_anchor_from_lines(&source_lines, source_line_index)),
+        fork_anchor,
         anchor_head_summary: branch_anchor_head_summary(&source_lines, source_line_start_index),
         anchor_summary: branch_anchor_summary(&source_lines, source_line_index, source_byte_offset),
         current_index,
         total: assistant_positions.len(),
-    })
-}
-
-struct AssistantResponse<'a> {
-    cells: Vec<(usize, &'a AgentMessageCell)>,
-}
-
-impl AssistantResponse<'_> {
-    fn source_lines(&self) -> Vec<String> {
-        self.cells
-            .iter()
-            .flat_map(|(_, cell)| cell.source_lines_plain_text())
-            .collect()
-    }
-
-    fn cell_position(
-        &self,
-        response_line_index: usize,
-    ) -> Option<(usize, &AgentMessageCell, usize)> {
-        let mut remaining = response_line_index;
-        for (cell_index, cell) in &self.cells {
-            let line_count = cell.source_lines_plain_text().len();
-            if remaining < line_count {
-                return Some((*cell_index, cell, remaining));
-            }
-            remaining = remaining.saturating_sub(line_count);
-        }
-        None
-    }
-
-    fn fork_anchor(
-        &self,
-        raw_assistant_markdown: &str,
-        snippets: &[NormalizedText],
-    ) -> Option<TranscriptForkAnchor> {
-        let raw_lines = raw_assistant_markdown
-            .split('\n')
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
-        let normalized_raw = NormalizedText::new(&raw_lines);
-        let match_range = find_branch_snippet_match(&normalized_raw.text, snippets).ok()?;
-        let (match_end_line_index, _) = normalized_raw
-            .mapping
-            .get(match_range.end.saturating_sub(1))
-            .copied()?;
-        let source_line_index = structure_end_line(&raw_lines, match_end_line_index);
-        let source_byte_offset =
-            absolute_line_end_anchor(raw_assistant_markdown, &raw_lines, source_line_index)?;
-
-        Some(TranscriptForkAnchor::LatestAssistant {
-            source_line_index: 0,
-            source_byte_offset,
-        })
-    }
-}
-
-fn latest_assistant_response(cells: &[Arc<dyn HistoryCell>]) -> Option<AssistantResponse<'_>> {
-    let (last_index, _) = cells.iter().enumerate().rev().find_map(|(index, cell)| {
-        cell.as_any()
-            .downcast_ref::<AgentMessageCell>()
-            .map(|cell| (index, cell))
-    })?;
-
-    let mut first_index = last_index;
-    while first_index > 0 {
-        let Some(current_cell) = cells[first_index]
-            .as_any()
-            .downcast_ref::<AgentMessageCell>()
-        else {
-            break;
-        };
-        if !current_cell.is_stream_continuation() {
-            break;
-        }
-        if cells[first_index - 1]
-            .as_any()
-            .downcast_ref::<AgentMessageCell>()
-            .is_none()
-        {
-            break;
-        }
-        first_index -= 1;
-    }
-
-    Some(AssistantResponse {
-        cells: (first_index..=last_index)
-            .filter_map(|cell_index| {
-                cells[cell_index]
-                    .as_any()
-                    .downcast_ref::<AgentMessageCell>()
-                    .map(|cell| (cell_index, cell))
-            })
-            .collect(),
-    })
-}
-
-fn absolute_line_end_anchor(
-    raw_text: &str,
-    raw_lines: &[String],
-    line_index: usize,
-) -> Option<usize> {
-    let line_start = raw_lines
-        .iter()
-        .take(line_index)
-        .map(|line| line.len() + 1)
-        .sum::<usize>();
-    let line = raw_lines.get(line_index)?;
-    let line_anchor = AgentMessageCell::transcript_anchor_byte_offset(line, &(0..line.len()))?;
-    let absolute_anchor = line_start + line_anchor;
-    (absolute_anchor < raw_text.len()).then_some(absolute_anchor)
-}
-
-fn latest_assistant_anchor_from_lines(
-    source_lines: &[String],
-    line_index: usize,
-) -> Option<TranscriptForkAnchor> {
-    let line_start = source_lines
-        .iter()
-        .take(line_index)
-        .map(|line| line.len() + 1)
-        .sum::<usize>();
-    let line = source_lines.get(line_index)?;
-    let line_anchor = AgentMessageCell::transcript_anchor_byte_offset(line, &(0..line.len()))?;
-    Some(TranscriptForkAnchor::LatestAssistant {
-        source_line_index: 0,
-        source_byte_offset: line_start + line_anchor,
-    })
+    }))
 }
 
 fn normalized_snippet_candidates(snippet: &str) -> Vec<NormalizedText> {
@@ -468,6 +587,17 @@ mod tests {
         ))
     }
 
+    fn agent_cell_with_raw_markdown(lines: &[&str], raw_markdown: &str) -> Arc<dyn HistoryCell> {
+        Arc::new(AgentMessageCell::new_with_raw_markdown(
+            lines
+                .iter()
+                .map(|line| Line::from((*line).to_string()))
+                .collect(),
+            /*is_first_line*/ true,
+            Some(raw_markdown.to_string()),
+        ))
+    }
+
     #[test]
     fn locates_wrapped_snippet_and_expands_to_paragraph_end() {
         let cells = vec![agent_cell(&[
@@ -525,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_ambiguous_snippet_in_latest_assistant_response() {
+    fn reports_ambiguous_snippet_in_assistant_response() {
         let cells = vec![agent_cell(&["repeat here", "repeat there"])];
 
         let result =
@@ -535,20 +665,48 @@ mod tests {
     }
 
     #[test]
-    fn searches_only_latest_assistant_response() {
+    fn searches_older_assistant_responses() {
         let cells = vec![
-            agent_cell(&["older response has unique text"]),
+            agent_cell_with_raw_markdown(
+                &["older response has unique text"],
+                "older response has unique text",
+            ),
             agent_cell(&["newer response"]),
+        ];
+
+        let target = locate_branch_snippet(
+            &cells,
+            /*raw_assistant_markdown*/ None,
+            "unique text",
+            80,
+        )
+        .expect("snippet should match an older assistant response");
+
+        assert_eq!(
+            target.fork_anchor,
+            Some(TranscriptForkAnchor::AssistantMessage {
+                assistant_message_index: 0,
+                source_line_index: 0,
+                source_byte_offset: "older response has unique text".len() - 1,
+            })
+        );
+    }
+
+    #[test]
+    fn reports_ambiguous_snippet_across_assistant_responses() {
+        let cells = vec![
+            agent_cell(&["same snippet"]),
+            agent_cell(&["same snippet again"]),
         ];
 
         let result = locate_branch_snippet(
             &cells,
             /*raw_assistant_markdown*/ None,
-            "unique text",
+            "same snippet",
             80,
         );
 
-        assert_eq!(result, Err(BranchSnippetError::NoMatch));
+        assert_eq!(result, Err(BranchSnippetError::AmbiguousMatch));
     }
 
     #[test]

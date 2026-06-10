@@ -270,23 +270,50 @@ impl HistoryCell for ReasoningSummaryCell {
 pub(crate) struct AgentMessageCell {
     lines: Vec<HyperlinkLine>,
     is_first_line: bool,
+    raw_markdown: Option<String>,
+    source_segments: Option<Vec<String>>,
 }
 
 impl AgentMessageCell {
     #[cfg(test)]
     pub(crate) fn new(lines: Vec<Line<'static>>, is_first_line: bool) -> Self {
-        Self {
-            lines: plain_hyperlink_lines(lines),
-            is_first_line,
-        }
+        Self::new_with_raw_markdown(lines, is_first_line, /*raw_markdown*/ None)
     }
 
     pub(crate) fn new_hyperlink_lines(lines: Vec<HyperlinkLine>, is_first_line: bool) -> Self {
         Self {
             lines,
             is_first_line,
+            raw_markdown: None,
+            source_segments: None,
         }
     }
+
+    pub(crate) fn new_with_raw_markdown(
+        lines: Vec<Line<'static>>,
+        is_first_line: bool,
+        raw_markdown: Option<String>,
+    ) -> Self {
+        Self {
+            lines: plain_hyperlink_lines(lines),
+            is_first_line,
+            raw_markdown,
+            source_segments: None,
+        }
+    }
+
+    pub(crate) fn raw_markdown_text(&self) -> Option<&str> {
+        self.raw_markdown.as_deref()
+    }
+
+    pub(crate) fn source_segments(&self) -> Option<&[String]> {
+        self.source_segments.as_deref()
+    }
+
+    pub(crate) fn set_source_segments(&mut self, source_segments: Option<Vec<String>>) {
+        self.source_segments = source_segments;
+    }
+
 }
 
 impl HistoryCell for AgentMessageCell {
@@ -357,6 +384,31 @@ impl AgentMarkdownCell {
             markdown_source,
             cwd: cwd.to_path_buf(),
         }
+    }
+
+    /// Returns the raw markdown source for this cell.
+    pub(crate) fn raw_markdown_text(&self) -> &str {
+        &self.markdown_source
+    }
+
+    /// Renders markdown source to plain-text lines for snippet search.
+    pub(crate) fn source_lines_plain_text(&self) -> Vec<String> {
+        let mut rendered = Vec::new();
+        crate::markdown::append_markdown(
+            &self.markdown_source,
+            /*width*/ None,
+            /*cwd*/ None,
+            &mut rendered,
+        );
+        rendered
+            .into_iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
     }
 }
 

@@ -212,6 +212,15 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::OpenDesktopThread { thread_id });
             }
+            SlashCommand::BranchFrom => {
+                self.add_error_message(
+                    "Usage: /branch-from <snippet>  — paste the text you want to branch from."
+                        .to_string(),
+                );
+            }
+            SlashCommand::Return => {
+                self.app_event_tx.send(AppEvent::ReturnFromBranch);
+            }
             SlashCommand::Init => {
                 const INIT_PROMPT: &str = include_str!("../../prompt_for_init_command.md");
                 self.submit_user_message(INIT_PROMPT.to_string().into());
@@ -664,6 +673,11 @@ impl ChatWidget {
                 };
                 self.app_event_tx.set_thread_name(name);
             }
+            SlashCommand::BranchFrom if !trimmed.is_empty() => {
+                self.app_event_tx.send(AppEvent::StartBranchFrom {
+                    snippet: trimmed.to_string(),
+                });
+            }
             SlashCommand::Plan if !trimmed.is_empty() => {
                 if !self.apply_plan_slash_command() {
                     return;
@@ -982,6 +996,7 @@ impl ChatWidget {
             | SlashCommand::Diff
             | SlashCommand::App
             | SlashCommand::Rename
+            | SlashCommand::Return
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Feedback
             | SlashCommand::New
@@ -989,6 +1004,7 @@ impl ChatWidget {
             | SlashCommand::Clear
             | SlashCommand::Resume
             | SlashCommand::Fork
+            | SlashCommand::BranchFrom
             | SlashCommand::Init
             | SlashCommand::Compact
             | SlashCommand::Review

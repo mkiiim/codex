@@ -52,6 +52,7 @@ impl App {
             tracing::debug!(
                 "ConsolidateAgentMessage: replacing cells [{start}..{end}] with AgentMarkdownCell"
             );
+            self.chat_widget.last_agent_markdown = Some(source.clone());
             let consolidated: Arc<dyn HistoryCell> =
                 Arc::new(history_cell::AgentMarkdownCell::new(source, &cwd));
             self.transcript_cells

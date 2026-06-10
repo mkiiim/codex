@@ -112,6 +112,8 @@ mod audio_device {
     }
 }
 mod bottom_pane;
+mod branch_chrome;
+mod branch_locator;
 mod branch_summary;
 mod chatwidget;
 mod cli;

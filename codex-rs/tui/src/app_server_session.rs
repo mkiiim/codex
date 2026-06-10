@@ -55,6 +55,7 @@ use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
+use codex_app_server_protocol::ThreadForkSnapshot;
 use codex_app_server_protocol::ThreadGoalClearParams;
 use codex_app_server_protocol::ThreadGoalClearResponse;
 use codex_app_server_protocol::ThreadGoalGetParams;
@@ -196,6 +197,24 @@ impl ThreadParamsMode {
             Self::Remote => None,
         }
     }
+}
+
+/// Carries branch metadata from the TUI's branching logic into `fork_thread_with_snapshot`,
+/// then returned to the caller so it can be stored on the relevant `ChatWidget`.
+#[derive(Debug, Clone)]
+pub(crate) struct BranchForkContext {
+    /// The fork snapshot to send in the `thread/fork` request.
+    pub(crate) snapshot: ThreadForkSnapshot,
+    /// Stable origin snapshot (always an `AssistantReadAnchor`) stored for branch provenance UI.
+    pub(crate) origin_snapshot: ThreadForkSnapshot,
+    /// Branch nesting depth of the *new* branch (parent depth + 1).
+    pub(crate) branch_depth: usize,
+    /// Short label summarising the selected snippet the user branched from.
+    pub(crate) selection_summary: Option<String>,
+    /// Summary of the anchor head line (first line of the structure being branched from).
+    pub(crate) anchor_head_summary: Option<String>,
+    /// Summary of the anchor tail (the last line up to the byte offset).
+    pub(crate) anchor_tail_summary: Option<String>,
 }
 
 #[derive(Debug)]
@@ -507,6 +526,40 @@ impl AppServerSession {
             started_thread_from_fork_response(response, &config, self.thread_params_mode()).await?;
         started.session.fork_parent_title = fork_parent_title;
         Ok(started)
+    }
+
+    pub(crate) async fn fork_thread_with_snapshot(
+        &mut self,
+        config: Config,
+        thread_id: ThreadId,
+        branch_context: BranchForkContext,
+    ) -> Result<(AppServerStartedThread, BranchForkContext)> {
+        let request_id = self.next_request_id();
+        let session_config = self.session_config_with_effective_service_tier(&config);
+        let mut params = thread_fork_params_from_config(
+            session_config,
+            thread_id,
+            self.thread_params_mode(),
+            self.remote_cwd_override.as_deref(),
+        );
+        params.snapshot = Some(branch_context.snapshot.clone());
+        params.branch_origin_snapshot = Some(branch_context.origin_snapshot.clone());
+        params.branch_depth = Some(branch_context.branch_depth as u32);
+        params.branch_selection_summary = branch_context.selection_summary.clone();
+        params.branch_anchor_head_summary = branch_context.anchor_head_summary.clone();
+        params.branch_anchor_tail_summary = branch_context.anchor_tail_summary.clone();
+        let response: ThreadForkResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadFork { request_id, params })
+            .await
+            .map_err(|err| bootstrap_request_error("thread/fork (branch-from) failed", err))?;
+        let fork_parent_title = self
+            .fork_parent_title_from_app_server(response.thread.forked_from_id.as_deref())
+            .await;
+        let mut started =
+            started_thread_from_fork_response(response, &config, self.thread_params_mode()).await?;
+        started.session.fork_parent_title = fork_parent_title;
+        Ok((started, branch_context))
     }
 
     pub(crate) fn thread_params_mode(&self) -> ThreadParamsMode {

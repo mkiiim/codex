@@ -153,6 +153,13 @@ impl App {
             AppEvent::ArchiveCurrentThread => {
                 return Ok(self.archive_current_thread(app_server).await);
             }
+            AppEvent::StartBranchFrom { snippet } => {
+                self.handle_start_branch_from(tui, app_server, snippet)
+                    .await;
+            }
+            AppEvent::ReturnFromBranch => {
+                self.handle_return_from_branch(tui, app_server).await;
+            }
             AppEvent::ForkCurrentSession => {
                 self.session_telemetry.counter(
                     "codex.thread.fork",

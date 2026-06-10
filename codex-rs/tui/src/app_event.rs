@@ -233,6 +233,16 @@ pub(crate) enum AppEvent {
     /// Fork the current session into a new thread.
     ForkCurrentSession,
 
+    /// Branch from a snippet in an older assistant reply.
+    ///
+    /// The snippet is the raw text pasted by the user as inline args to `/branch-from`.
+    StartBranchFrom {
+        snippet: String,
+    },
+
+    /// Return from the current branch to its parent thread.
+    ReturnFromBranch,
+
     /// Request to exit the application.
     ///
     /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the

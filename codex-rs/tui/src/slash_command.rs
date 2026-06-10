@@ -35,6 +35,9 @@ pub enum SlashCommand {
     Resume,
     Fork,
     App,
+    #[strum(to_string = "branch-from", serialize = "branchfrom")]
+    BranchFrom,
+    Return,
     Init,
     Compact,
     Plan,
@@ -93,6 +96,8 @@ impl SlashCommand {
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
             SlashCommand::App => "continue this session in Codex Desktop",
+            SlashCommand::BranchFrom => "branch from a snippet in an older assistant reply",
+            SlashCommand::Return => "return to the parent thread from a branch",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
             SlashCommand::Raw => "toggle raw scrollback mode for copy-friendly terminal selection",
@@ -168,6 +173,7 @@ impl SlashCommand {
                 | SlashCommand::Btw
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
+                | SlashCommand::BranchFrom
         )
     }
 
@@ -208,7 +214,8 @@ impl SlashCommand {
             | SlashCommand::Clear
             | SlashCommand::Logout
             | SlashCommand::MemoryDrop
-            | SlashCommand::MemoryUpdate => false,
+            | SlashCommand::MemoryUpdate
+            | SlashCommand::BranchFrom => false,
             SlashCommand::Diff
             | SlashCommand::Copy
             | SlashCommand::Raw
@@ -233,7 +240,8 @@ impl SlashCommand {
             | SlashCommand::Quit
             | SlashCommand::Exit
             | SlashCommand::Side
-            | SlashCommand::Btw => true,
+            | SlashCommand::Btw
+            | SlashCommand::Return => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Realtime => true,

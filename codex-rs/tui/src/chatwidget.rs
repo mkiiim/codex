@@ -723,6 +723,12 @@ pub(crate) struct ChatWidget {
     realtime_conversation: RealtimeConversationUiState,
     last_rendered_user_message_display: Option<UserMessageDisplay>,
     last_non_retry_error: Option<(String, String)>,
+    // Branch-from state for this session (zero/None when not a line-branch).
+    pub(crate) branch_depth: usize,
+    pub(crate) branch_anchor_selection_summary: Option<String>,
+    pub(crate) branch_origin_snapshot: Option<codex_app_server_protocol::ThreadForkSnapshot>,
+    /// Raw markdown from the last completed assistant response (for branch-from snippet lookup).
+    pub(crate) last_agent_markdown: Option<String>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1874,6 +1880,10 @@ impl ChatWidget {
 
     pub(crate) fn thread_id(&self) -> Option<ThreadId> {
         self.thread_id
+    }
+
+    pub(crate) fn parent_thread_id(&self) -> Option<ThreadId> {
+        self.forked_from
     }
 
     pub(crate) fn thread_name(&self) -> Option<String> {

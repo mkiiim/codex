@@ -221,6 +221,10 @@ impl ChatWidget {
             realtime_conversation: RealtimeConversationUiState::default(),
             last_rendered_user_message_display: None,
             last_non_retry_error: None,
+            branch_depth: 0,
+            branch_anchor_selection_summary: None,
+            branch_origin_snapshot: None,
+            last_agent_markdown: None,
         };
 
         widget.prefetch_rate_limits();

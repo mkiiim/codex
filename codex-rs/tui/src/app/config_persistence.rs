@@ -1230,6 +1230,8 @@ enabled = false
                 message_history: None,
                 network_proxy: None,
                 rollout_path: Some(PathBuf::new()),
+                branch_depth: None,
+                branch_anchor_summary: None,
             });
 
         assert_eq!(app.chat_widget.config_ref().cwd.to_path_buf(), next_cwd);

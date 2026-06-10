@@ -510,6 +510,8 @@ fn session_configured_event(model: &str) -> ThreadSessionState {
         message_history: None,
         network_proxy: None,
         rollout_path: Some(PathBuf::new()),
+        branch_depth: None,
+        branch_anchor_summary: None,
     }
 }
 

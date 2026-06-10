@@ -32,6 +32,27 @@ impl ChatWidget {
         self.current_goal_status = None;
         self.update_collaboration_mode_indicator();
         self.forked_from = session.forked_from_id;
+        match session.branch_depth {
+            Some(depth) if depth > 0 => {
+                self.branch_depth = depth as usize;
+                self.branch_anchor_selection_summary = session.branch_anchor_summary.clone();
+            }
+            Some(_) => {
+                // Explicit depth=0 from server: root thread.
+                self.branch_depth = 0;
+                self.branch_anchor_selection_summary = None;
+            }
+            None if session.forked_from_id.is_none() => {
+                // No branch context and no parent: root thread, clear stale state.
+                self.branch_depth = 0;
+                self.branch_anchor_selection_summary = None;
+            }
+            None => {
+                // forked_from_id is Some but branch_depth unknown: this happens for the
+                // fork response during a live /branch-from, where branching.rs already set
+                // the depth directly. Leave the existing value in place.
+            }
+        }
         self.current_rollout_path = session.rollout_path.clone();
         self.current_cwd = Some(session.cwd.to_path_buf());
         self.config.cwd = session.cwd.clone();

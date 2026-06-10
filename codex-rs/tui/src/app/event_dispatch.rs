@@ -160,6 +160,19 @@ impl App {
             AppEvent::ReturnFromBranch => {
                 self.handle_return_from_branch(tui, app_server).await;
             }
+            AppEvent::ShowBranchInfo => {
+                self.show_branch_info(app_server).await;
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::ShowBranchList => {
+                self.show_branch_list(app_server).await;
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::SelectBranchNavigatorThread { thread_id, kind } => {
+                return self
+                    .select_branch_navigator_thread(tui, app_server, thread_id, kind)
+                    .await;
+            }
             AppEvent::ForkCurrentSession => {
                 self.session_telemetry.counter(
                     "codex.thread.fork",

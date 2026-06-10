@@ -221,6 +221,12 @@ impl ChatWidget {
             SlashCommand::Return => {
                 self.app_event_tx.send(AppEvent::ReturnFromBranch);
             }
+            SlashCommand::BranchInfo => {
+                self.app_event_tx.send(AppEvent::ShowBranchInfo);
+            }
+            SlashCommand::BranchList => {
+                self.app_event_tx.send(AppEvent::ShowBranchList);
+            }
             SlashCommand::Init => {
                 const INIT_PROMPT: &str = include_str!("../../prompt_for_init_command.md");
                 self.submit_user_message(INIT_PROMPT.to_string().into());
@@ -997,6 +1003,8 @@ impl ChatWidget {
             | SlashCommand::App
             | SlashCommand::Rename
             | SlashCommand::Return
+            | SlashCommand::BranchInfo
+            | SlashCommand::BranchList
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Feedback
             | SlashCommand::New

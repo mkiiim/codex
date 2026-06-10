@@ -57,6 +57,8 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
         message_history: None,
         network_proxy: None,
         rollout_path: None,
+        branch_depth: None,
+        branch_anchor_summary: None,
     }
 }
 

@@ -4,11 +4,17 @@
 //! `AppEvent::ReturnFromBranch` (navigate back to the parent thread).
 
 use super::App;
+use super::AppRunControl;
+use crate::app_event::BranchNavigatorSelectionKind;
+use crate::app_server_session::AppServerSession;
 use crate::app_server_session::BranchForkContext;
+use crate::resume_picker::SessionTarget;
 use crate::branch_chrome::BranchStateNoticeKind;
 use crate::branch_locator::BranchSnippetError;
 use crate::branch_locator::locate_branch_snippet;
 use crate::tui;
+use codex_protocol::ThreadId;
+use color_eyre::eyre::Result;
 
 impl App {
     pub(super) async fn handle_start_branch_from(
@@ -188,5 +194,40 @@ impl App {
         }
 
         tui.frame_requester().schedule_frame();
+    }
+
+    pub(super) async fn select_branch_navigator_thread(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
+        thread_id: ThreadId,
+        kind: BranchNavigatorSelectionKind,
+    ) -> Result<AppRunControl> {
+        let previous_branch_depth = self.chat_widget.branch_depth;
+        let target_session = SessionTarget {
+            path: None,
+            thread_id,
+        };
+
+        match self
+            .resume_target_session(tui, app_server, target_session)
+            .await?
+        {
+            AppRunControl::Continue => {}
+            AppRunControl::Exit(reason) => return Ok(AppRunControl::Exit(reason)),
+        }
+
+        if self.active_thread_id == Some(thread_id)
+            && kind == BranchNavigatorSelectionKind::ReturnToAncestor
+            && previous_branch_depth > 0
+        {
+            let notice = BranchStateNoticeKind::ReturnedToParent {
+                depth: previous_branch_depth,
+            };
+            let title = crate::branch_chrome::branch_state_title(&notice);
+            self.chat_widget.add_plain_history_lines(vec![title.into()]);
+        }
+
+        Ok(AppRunControl::Continue)
     }
 }

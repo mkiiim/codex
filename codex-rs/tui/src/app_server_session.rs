@@ -1697,7 +1697,7 @@ async fn thread_session_state_from_thread_resume_response(
             thread_params_mode,
         )
     };
-    thread_session_state_from_thread_response(
+    let mut state = thread_session_state_from_thread_response(
         &response.thread.id,
         response.thread.forked_from_id.clone(),
         response.thread.name.clone(),
@@ -1715,7 +1715,10 @@ async fn thread_session_state_from_thread_resume_response(
         response.reasoning_effort.clone(),
         config,
     )
-    .await
+    .await?;
+    state.branch_depth = response.thread.branch_depth;
+    state.branch_anchor_summary = response.thread.branch_anchor_summary.clone();
+    Ok(state)
 }
 
 async fn thread_session_state_from_thread_fork_response(
@@ -1800,6 +1803,8 @@ async fn thread_session_state_from_thread_response(
         thread_id,
         forked_from_id,
         fork_parent_title: None,
+        branch_depth: None,
+        branch_anchor_summary: None,
         thread_name,
         model,
         model_provider_id,
@@ -2440,6 +2445,8 @@ mod tests {
                 agent_role: None,
                 git_info: None,
                 name: None,
+                branch_depth: None,
+                branch_anchor_summary: None,
                 turns: vec![Turn {
                     id: "turn-1".to_string(),
                     items_view: codex_app_server_protocol::TurnItemsView::Full,

@@ -67,6 +67,12 @@ pub(crate) enum ThreadGoalSetMode {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BranchNavigatorSelectionKind {
+    ReturnToAncestor,
+    OpenCurrentOrDescendant,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct HistoryLookupResponse {
     pub(crate) offset: usize,
@@ -242,6 +248,18 @@ pub(crate) enum AppEvent {
 
     /// Return from the current branch to its parent thread.
     ReturnFromBranch,
+
+    /// Show branch metadata (depth, anchor, parent thread) for the current thread.
+    ShowBranchInfo,
+
+    /// List child branches created from the current thread.
+    ShowBranchList,
+
+    /// Navigate to a thread selected from the branch navigator.
+    SelectBranchNavigatorThread {
+        thread_id: ThreadId,
+        kind: BranchNavigatorSelectionKind,
+    },
 
     /// Request to exit the application.
     ///

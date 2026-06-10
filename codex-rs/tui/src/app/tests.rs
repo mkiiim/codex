@@ -2235,6 +2235,8 @@ async fn inactive_thread_approval_bubbles_into_active_view() -> Result<()> {
                 approval_policy: AskForApproval::OnRequest,
                 permission_profile: PermissionProfile::workspace_write(),
                 rollout_path: Some(test_path_buf("/tmp/agent-rollout.jsonl")),
+                branch_depth: None,
+                branch_anchor_summary: None,
                 ..test_thread_session(agent_thread_id, test_path_buf("/tmp/agent"))
             },
             Vec::new(),
@@ -2394,6 +2396,8 @@ async fn side_defers_subagent_approval_overlay_until_side_exits() -> Result<()> 
                 approval_policy: AskForApproval::OnRequest,
                 permission_profile: PermissionProfile::workspace_write(),
                 rollout_path: Some(test_path_buf("/tmp/agent-rollout.jsonl")),
+                branch_depth: None,
+                branch_anchor_summary: None,
                 ..test_thread_session(agent_thread_id, test_path_buf("/tmp/agent"))
             },
             Vec::new(),
@@ -2772,6 +2776,8 @@ async fn inactive_thread_approval_badge_clears_after_turn_completion_notificatio
                 approval_policy: AskForApproval::OnRequest,
                 permission_profile: PermissionProfile::workspace_write(),
                 rollout_path: Some(test_path_buf("/tmp/agent-rollout.jsonl")),
+                branch_depth: None,
+                branch_anchor_summary: None,
                 ..test_thread_session(agent_thread_id, test_path_buf("/tmp/agent"))
             },
             Vec::new(),
@@ -2878,6 +2884,8 @@ async fn inactive_thread_started_notification_initializes_replay_session() -> Re
                 agent_role: Some("explorer".to_string()),
                 git_info: None,
                 name: Some("agent thread".to_string()),
+                branch_depth: None,
+                branch_anchor_summary: None,
                 turns: Vec::new(),
             },
         }),
@@ -2970,6 +2978,8 @@ async fn inactive_thread_started_notification_preserves_primary_model_when_path_
                 agent_role: Some("explorer".to_string()),
                 git_info: None,
                 name: Some("agent thread".to_string()),
+                branch_depth: None,
+                branch_anchor_summary: None,
                 turns: Vec::new(),
             },
         }),
@@ -3029,6 +3039,8 @@ async fn thread_read_session_state_does_not_reuse_primary_permission_profile() {
         agent_role: None,
         git_info: None,
         name: Some("read thread".to_string()),
+        branch_depth: None,
+        branch_anchor_summary: None,
         turns: Vec::new(),
     };
 
@@ -3393,6 +3405,8 @@ async fn side_thread_snapshot_does_not_refresh_from_fork_history() {
     let snapshot = ThreadEventSnapshot {
         session: Some(ThreadSessionState {
             rollout_path: None,
+            branch_depth: None,
+            branch_anchor_summary: None,
             ..test_thread_session(side_thread_id, test_path_buf("/tmp/side"))
         }),
         turns: Vec::new(),
@@ -3915,6 +3929,8 @@ async fn render_clear_ui_header_after_long_transcript_for_snapshot() -> String {
             message_history: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
+            branch_depth: None,
+            branch_anchor_summary: None,
         };
         Arc::new(new_session_info(
             app.chat_widget.config_ref(),
@@ -4170,6 +4186,8 @@ fn test_thread_session(thread_id: ThreadId, cwd: PathBuf) -> ThreadSessionState 
         message_history: None,
         network_proxy: None,
         rollout_path: Some(PathBuf::new()),
+        branch_depth: None,
+        branch_anchor_summary: None,
     }
 }
 
@@ -4792,6 +4810,8 @@ async fn backtrack_selection_with_duplicate_history_targets_unique_turn() {
             message_history: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
+            branch_depth: None,
+            branch_anchor_summary: None,
         };
         Arc::new(new_session_info(
             app.chat_widget.config_ref(),
@@ -4858,6 +4878,8 @@ async fn backtrack_selection_with_duplicate_history_targets_unique_turn() {
             message_history: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
+            branch_depth: None,
+            branch_anchor_summary: None,
         });
 
     app.backtrack.base_id = Some(base_id);
@@ -5008,6 +5030,8 @@ async fn backtrack_resubmit_preserves_data_image_urls_in_user_turn() {
             message_history: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
+            branch_depth: None,
+            branch_anchor_summary: None,
         });
 
     let data_image_url = "data:image/png;base64,abc123".to_string();
@@ -5374,6 +5398,8 @@ async fn thread_rollback_response_discards_queued_active_thread_events() {
                 agent_role: None,
                 git_info: None,
                 name: None,
+                branch_depth: None,
+                branch_anchor_summary: None,
                 turns: Vec::new(),
             },
         },
@@ -5414,6 +5440,8 @@ async fn new_session_requests_shutdown_for_previous_conversation() {
             message_history: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
+            branch_depth: None,
+            branch_anchor_summary: None,
         };
 
         app.chat_widget.handle_thread_session(event);
@@ -5827,6 +5855,8 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
             message_history: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
+            branch_depth: None,
+            branch_anchor_summary: None,
         });
     app.chat_widget
         .apply_external_edit("draft prompt".to_string());

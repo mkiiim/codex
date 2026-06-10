@@ -37,6 +37,10 @@ pub enum SlashCommand {
     App,
     #[strum(to_string = "branch-from", serialize = "branchfrom")]
     BranchFrom,
+    #[strum(to_string = "branch-info")]
+    BranchInfo,
+    #[strum(to_string = "branch-list")]
+    BranchList,
     Return,
     Init,
     Compact,
@@ -97,6 +101,8 @@ impl SlashCommand {
             SlashCommand::Fork => "fork the current chat",
             SlashCommand::App => "continue this session in Codex Desktop",
             SlashCommand::BranchFrom => "branch from a snippet in an older assistant reply",
+            SlashCommand::BranchInfo => "show current branch depth, anchor, and parent thread",
+            SlashCommand::BranchList => "list child branches created from this conversation",
             SlashCommand::Return => "return to the parent thread from a branch",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
@@ -241,7 +247,9 @@ impl SlashCommand {
             | SlashCommand::Exit
             | SlashCommand::Side
             | SlashCommand::Btw
-            | SlashCommand::Return => true,
+            | SlashCommand::Return
+            | SlashCommand::BranchInfo
+            | SlashCommand::BranchList => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Realtime => true,

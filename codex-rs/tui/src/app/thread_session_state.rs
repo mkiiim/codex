@@ -91,6 +91,8 @@ impl App {
                 thread_id,
                 forked_from_id: None,
                 fork_parent_title: None,
+                branch_depth: None,
+                branch_anchor_summary: None,
                 thread_name: None,
                 model: self.chat_widget.current_model().to_string(),
                 model_provider_id: self.config.model_provider_id.clone(),
@@ -192,6 +194,8 @@ mod tests {
             message_history: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
+            branch_depth: None,
+            branch_anchor_summary: None,
         }
     }
 
@@ -427,6 +431,8 @@ mod tests {
             agent_role: None,
             git_info: None,
             name: Some("read thread".to_string()),
+            branch_depth: None,
+            branch_anchor_summary: None,
             turns: Vec::new(),
         };
 

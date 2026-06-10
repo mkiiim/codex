@@ -1882,6 +1882,10 @@ impl ChatWidget {
         self.thread_id
     }
 
+    pub(crate) fn branch_anchor_summary(&self) -> Option<&str> {
+        self.branch_anchor_selection_summary.as_deref()
+    }
+
     pub(crate) fn parent_thread_id(&self) -> Option<ThreadId> {
         self.forked_from
     }

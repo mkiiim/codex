@@ -146,6 +146,8 @@ mod tests {
             agent_role: None,
             git_info: None,
             name: None,
+            branch_depth: None,
+            branch_anchor_summary: None,
             turns: Vec::new(),
         }
     }

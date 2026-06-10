@@ -30,6 +30,10 @@ pub(crate) struct ThreadSessionState {
     pub(crate) thread_id: ThreadId,
     pub(crate) forked_from_id: Option<ThreadId>,
     pub(crate) fork_parent_title: Option<String>,
+    /// Branch nesting depth read from rollout SessionMeta; 0 (or None) for root threads.
+    pub(crate) branch_depth: Option<u32>,
+    /// Short anchor summary from the branch point, if recorded.
+    pub(crate) branch_anchor_summary: Option<String>,
     pub(crate) thread_name: Option<String>,
     pub(crate) model: String,
     pub(crate) model_provider_id: String,

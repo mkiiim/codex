@@ -1,7 +1,10 @@
 use super::*;
 use crate::app_event::HistoryLookupResponse;
+use crate::branch_locator::locate_branch_snippet;
+use crate::history_cell::AgentMessageCell;
 use codex_app_server_protocol::NetworkAccess;
 use codex_app_server_protocol::SandboxPolicy;
+use codex_app_server_protocol::ThreadForkSnapshot;
 use codex_protocol::models::ManagedFileSystemPermissions;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
@@ -74,6 +77,55 @@ async fn resumed_initial_messages_render_history() {
     assert!(
         text_blob.contains("assistant reply"),
         "expected replayed agent message",
+    );
+}
+
+#[tokio::test]
+async fn replayed_agent_message_preserves_branchable_markdown_source() {
+    let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    let source_text = "That point is about deciding, before launch, exactly what sensitive data your AI product will touch.\n\nIn practice, that means defining things like:\n\n- whether prompts, uploads, and outputs are stored\n- who can access them internally\n".to_string();
+    chat.replay_thread_item(
+        AppServerThreadItem::AgentMessage {
+            id: "assistant-1".to_string(),
+            text: "That point is about deciding, before launch, exactly what sensitive data your AI product will touch.\n\nIn practice, that means defining things like:\n\n- whether prompts, uploads, and outputs are stored\n- who can access them internally".to_string(),
+            source_text: Some(source_text.clone()),
+            source_segments: Some(vec![source_text.clone()]),
+            phase: Some(MessagePhase::FinalAnswer),
+            memory_citation: None,
+        },
+        "turn-1".to_string(),
+        ReplayKind::ResumeInitialMessages,
+    );
+
+    let mut replayed_cell = None;
+    while let Ok(event) = rx.try_recv() {
+        if let AppEvent::InsertHistoryCell(cell) = event {
+            replayed_cell = Some(Arc::<dyn HistoryCell>::from(cell));
+        }
+    }
+    let replayed_cell = replayed_cell.expect("expected replayed assistant cell");
+    let agent_cell = replayed_cell
+        .as_any()
+        .downcast_ref::<AgentMessageCell>()
+        .expect("expected replayed agent message cell");
+
+    assert_eq!(agent_cell.raw_markdown_text(), Some(source_text.as_str()));
+    assert_eq!(chat.last_agent_markdown_text(), Some(source_text.as_str()));
+
+    let target = locate_branch_snippet(
+        &[replayed_cell],
+        None,
+        chat.last_agent_markdown_text(),
+        "- whether prompts, uploads, and outputs are stored",
+    )
+    .expect("expected replayed source-backed assistant reply to remain branchable");
+    assert_eq!(
+        target.snapshot,
+        ThreadForkSnapshot::LatestAssistantReadAnchor {
+            source_line_index: 0,
+            source_byte_offset: 198,
+        }
     );
 }
 

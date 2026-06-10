@@ -6,6 +6,43 @@
 use super::*;
 
 impl ChatWidget {
+    fn replay_completed_agent_message(
+        &mut self,
+        text: String,
+        source_text: Option<String>,
+        source_segments: Option<Vec<String>>,
+        phase: Option<MessagePhase>,
+    ) {
+        let raw_markdown = source_text.filter(|source| !source.trim().is_empty());
+        let render_source = raw_markdown.as_deref().unwrap_or(text.as_str());
+        let parsed = parse_assistant_markdown(render_source, self.config.cwd.as_path());
+        let visible_markdown = parsed.visible_markdown;
+        let mut lines = Vec::new();
+        crate::markdown::append_markdown(
+            &visible_markdown,
+            /*width*/ None,
+            Some(self.config.cwd.as_path()),
+            &mut lines,
+        );
+        let mut cell = history_cell::AgentMessageCell::new_with_raw_markdown(
+            lines,
+            /*is_first_line*/ true,
+            raw_markdown.clone(),
+        );
+        cell.set_source_segments(source_segments);
+        self.add_to_history(cell);
+        if matches!(phase, Some(MessagePhase::FinalAnswer) | None) {
+            if let Some(raw_markdown) = raw_markdown {
+                self.record_agent_markdown(&raw_markdown);
+            } else if visible_markdown.is_empty() {
+                self.last_agent_markdown = None;
+            } else {
+                self.record_agent_markdown(&visible_markdown);
+            }
+        }
+        self.request_redraw();
+    }
+
     /// Replay a subset of initial events into the UI to seed the transcript when
     /// resuming an existing session. This approximates the live event flow and
     /// is intentionally conservative: only safe-to-replay items are rendered to
@@ -78,34 +115,42 @@ impl ChatWidget {
             ThreadItem::AgentMessage {
                 id,
                 text,
+                source_text,
+                source_segments,
                 phase,
                 memory_citation,
             } => {
-                self.on_agent_message_item_completed(
-                    AgentMessageItem {
-                        id,
-                        content: vec![AgentMessageContent::Text { text }],
-                        phase,
-                        memory_citation: memory_citation.map(|citation| {
-                            codex_protocol::memory_citation::MemoryCitation {
-                                entries: citation
-                                    .entries
-                                    .into_iter()
-                                    .map(|entry| {
-                                        codex_protocol::memory_citation::MemoryCitationEntry {
-                                            path: entry.path,
-                                            line_start: entry.line_start,
-                                            line_end: entry.line_end,
-                                            note: entry.note,
-                                        }
-                                    })
-                                    .collect(),
-                                rollout_ids: citation.thread_ids,
-                            }
-                        }),
-                    },
-                    from_replay,
-                );
+                if from_replay {
+                    let _ = id;
+                    let _ = memory_citation;
+                    self.replay_completed_agent_message(text, source_text, source_segments, phase);
+                } else {
+                    self.on_agent_message_item_completed(
+                        AgentMessageItem {
+                            id,
+                            content: vec![AgentMessageContent::Text { text }],
+                            phase,
+                            memory_citation: memory_citation.map(|citation| {
+                                codex_protocol::memory_citation::MemoryCitation {
+                                    entries: citation
+                                        .entries
+                                        .into_iter()
+                                        .map(|entry| {
+                                            codex_protocol::memory_citation::MemoryCitationEntry {
+                                                path: entry.path,
+                                                line_start: entry.line_start,
+                                                line_end: entry.line_end,
+                                                note: entry.note,
+                                            }
+                                        })
+                                        .collect(),
+                                    rollout_ids: citation.thread_ids,
+                                }
+                            }),
+                        },
+                        /*from_replay*/ false,
+                    );
+                }
             }
             ThreadItem::Plan { text, .. } => self.on_plan_item_completed(text),
             ThreadItem::Reasoning {

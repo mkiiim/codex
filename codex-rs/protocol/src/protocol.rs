@@ -2769,6 +2769,40 @@ impl fmt::Display for InternalSessionSource {
     }
 }
 
+/// Records where in an assistant reply a conversational branch was created.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+pub enum BranchOrigin {
+    /// Branch from a specific older assistant reply identified by message index.
+    AssistantReadAnchor {
+        assistant_message_index: u32,
+        source_line_index: u32,
+        source_byte_offset: u32,
+    },
+    /// Branch from the latest assistant reply.
+    LatestAssistantReadAnchor {
+        source_line_index: u32,
+        source_byte_offset: u32,
+    },
+}
+
+/// UI-visible metadata describing how a conversational branch should be labeled.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+pub struct BranchContext {
+    pub depth: u32,
+    /// Short summary of the text the user selected as the branch point.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_summary: Option<String>,
+    /// Summary of the assistant reply content preceding the branch point.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_head_summary: Option<String>,
+    /// Summary of the assistant reply content at and after the branch point.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_tail_summary: Option<String>,
+    /// Identifies the exact reply and offset where the branch was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<BranchOrigin>,
+}
+
 fn multi_agent_version_from_items(
     items: &[RolloutItem],
     thread_id: Option<ThreadId>,
@@ -2814,6 +2848,8 @@ pub struct SessionMeta {
     pub forked_from_id: Option<ThreadId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_context: Option<BranchContext>,
     pub timestamp: String,
     pub cwd: PathBuf,
     pub originator: String,
@@ -2851,6 +2887,7 @@ impl Default for SessionMeta {
             id: ThreadId::default(),
             forked_from_id: None,
             parent_thread_id: None,
+            branch_context: None,
             timestamp: String::new(),
             cwd: PathBuf::new(),
             originator: String::new(),
@@ -3811,6 +3848,7 @@ pub struct TurnAbortedEvent {
 #[serde(rename_all = "snake_case")]
 pub enum TurnAbortReason {
     Interrupted,
+    Branched,
     Replaced,
     ReviewEnded,
     BudgetLimited,

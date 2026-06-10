@@ -108,6 +108,7 @@ pub(crate) async fn run_codex_thread_interactive(
         thread_store: Arc::clone(&parent_session.services.thread_store),
         attestation_provider: parent_session.services.attestation_provider.clone(),
         inherited_multi_agent_version: Some(MultiAgentVersion::Disabled),
+        branch_context: None,
     }))
     .or_cancel(&cancel_token)
     .await??;

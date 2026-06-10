@@ -229,6 +229,8 @@ pub enum ThreadItem {
     AgentMessage {
         id: String,
         text: String,
+        source_text: Option<String>,
+        source_segments: Option<Vec<String>>,
         #[serde(default)]
         phase: Option<MessagePhase>,
         #[serde(default)]
@@ -802,15 +804,18 @@ impl From<CoreTurnItem> for ThreadItem {
                     .collect(),
             },
             CoreTurnItem::AgentMessage(agent) => {
-                let text = agent
+                let source_segments = agent
                     .content
                     .into_iter()
                     .map(|entry| match entry {
                         CoreAgentMessageContent::Text { text } => text,
                     })
-                    .collect::<String>();
+                    .collect::<Vec<_>>();
+                let text = source_segments.concat();
                 ThreadItem::AgentMessage {
                     id: agent.id,
+                    source_text: Some(text.clone()),
+                    source_segments: Some(source_segments),
                     text,
                     phase: agent.phase,
                     memory_citation: agent.memory_citation.map(Into::into),

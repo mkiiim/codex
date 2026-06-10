@@ -389,6 +389,7 @@ use codex_protocol::openai_models::ReasoningEffort;
 #[cfg(test)]
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::AgentStatus;
+use codex_protocol::protocol::BranchContext;
 use codex_protocol::protocol::ConversationAudioParams;
 use codex_protocol::protocol::ConversationStartParams;
 use codex_protocol::protocol::ConversationStartTransport;

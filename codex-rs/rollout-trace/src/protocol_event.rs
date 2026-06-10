@@ -397,6 +397,7 @@ impl TraceExecutionStatus for PatchApplyStatus {
 fn execution_status_for_abort_reason(reason: &TurnAbortReason) -> ExecutionStatus {
     match reason {
         TurnAbortReason::Interrupted
+        | TurnAbortReason::Branched
         | TurnAbortReason::Replaced
         | TurnAbortReason::ReviewEnded
         | TurnAbortReason::BudgetLimited => ExecutionStatus::Cancelled,

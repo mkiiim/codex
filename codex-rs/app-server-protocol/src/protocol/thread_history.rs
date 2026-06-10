@@ -300,6 +300,8 @@ impl ThreadHistoryBuilder {
         let id = self.next_item_id();
         self.ensure_turn().items.push(ThreadItem::AgentMessage {
             id,
+            source_text: Some(text.clone()),
+            source_segments: Some(vec![text.clone()]),
             text,
             phase,
             memory_citation,
@@ -348,6 +350,12 @@ impl ThreadHistoryBuilder {
 
     fn handle_item_started(&mut self, payload: &ItemStartedEvent) {
         match &payload.item {
+            codex_protocol::items::TurnItem::AgentMessage(agent_message) => {
+                if agent_message.content.is_empty() {
+                    return;
+                }
+                self.upsert_completed_agent_message(&payload.turn_id, payload.item.clone());
+            }
             codex_protocol::items::TurnItem::Plan(plan) => {
                 if plan.text.is_empty() {
                     return;
@@ -359,7 +367,6 @@ impl ThreadHistoryBuilder {
             }
             codex_protocol::items::TurnItem::UserMessage(_)
             | codex_protocol::items::TurnItem::HookPrompt(_)
-            | codex_protocol::items::TurnItem::AgentMessage(_)
             | codex_protocol::items::TurnItem::Reasoning(_)
             | codex_protocol::items::TurnItem::WebSearch(_)
             | codex_protocol::items::TurnItem::ImageView(_)
@@ -368,6 +375,55 @@ impl ThreadHistoryBuilder {
             | codex_protocol::items::TurnItem::McpToolCall(_)
             | codex_protocol::items::TurnItem::ContextCompaction(_) => {}
         }
+    }
+
+    fn upsert_completed_agent_message(
+        &mut self,
+        turn_id: &str,
+        item: codex_protocol::items::TurnItem,
+    ) {
+        let item = ThreadItem::from(item);
+        let Some(completed_text) = item_agent_message_text(&item) else {
+            self.upsert_item_in_turn_id(turn_id, item);
+            return;
+        };
+
+        let replace_in_items = |items: &mut Vec<ThreadItem>| {
+            let mut matches = items
+                .iter()
+                .enumerate()
+                .filter_map(|(index, existing_item)| {
+                    matches!(
+                        existing_item,
+                        ThreadItem::AgentMessage {
+                            text,
+                            ..
+                        } if text == completed_text
+                    )
+                    .then_some(index)
+                });
+            match (matches.next(), matches.next()) {
+                (Some(first), None) => items[first] = item.clone(),
+                _ => upsert_turn_item(items, item.clone()),
+            }
+        };
+
+        if let Some(turn) = self.current_turn.as_mut()
+            && turn.id == turn_id
+        {
+            replace_in_items(&mut turn.items);
+            return;
+        }
+
+        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) {
+            replace_in_items(&mut turn.items);
+            return;
+        }
+
+        warn!(
+            item_id = item.id(),
+            "dropping completed agent message for unknown turn id `{turn_id}`"
+        );
     }
 
     fn handle_item_completed(&mut self, payload: &ItemCompletedEvent) {
@@ -1152,6 +1208,13 @@ fn upsert_turn_item(items: &mut Vec<ThreadItem>, item: ThreadItem) {
     items.push(item);
 }
 
+fn item_agent_message_text(item: &ThreadItem) -> Option<&str> {
+    match item {
+        ThreadItem::AgentMessage { text, .. } => Some(text),
+        _ => None,
+    }
+}
+
 struct PendingTurn {
     id: String,
     items: Vec<ThreadItem>,
@@ -1329,6 +1392,8 @@ mod tests {
             ThreadItem::AgentMessage {
                 id: "item-2".into(),
                 text: "Hi there".into(),
+                source_text: Some("Hi there".into()),
+                source_segments: Some(vec!["Hi there".into()]),
                 phase: None,
                 memory_citation: None,
             }
@@ -1362,6 +1427,8 @@ mod tests {
             ThreadItem::AgentMessage {
                 id: "item-5".into(),
                 text: "Reply two".into(),
+                source_text: Some("Reply two".into()),
+                source_segments: Some(vec!["Reply two".into()]),
                 phase: None,
                 memory_citation: None,
             }
@@ -1548,6 +1615,8 @@ mod tests {
             ThreadItem::AgentMessage {
                 id: "item-1".into(),
                 text: "Final reply".into(),
+                source_text: Some("Final reply".into()),
+                source_segments: Some(vec!["Final reply".into()]),
                 phase: Some(MessagePhase::FinalAnswer),
                 memory_citation: None,
             }
@@ -1738,6 +1807,8 @@ mod tests {
             ThreadItem::AgentMessage {
                 id: "item-2".into(),
                 text: "Working...".into(),
+                source_text: Some("Working...".into()),
+                source_segments: Some(vec!["Working...".into()]),
                 phase: None,
                 memory_citation: None,
             }
@@ -1762,6 +1833,8 @@ mod tests {
             ThreadItem::AgentMessage {
                 id: "item-4".into(),
                 text: "Second attempt complete.".into(),
+                source_text: Some("Second attempt complete.".into()),
+                source_segments: Some(vec!["Second attempt complete.".into()]),
                 phase: None,
                 memory_citation: None,
             }
@@ -1838,6 +1911,8 @@ mod tests {
                 ThreadItem::AgentMessage {
                     id: "item-2".into(),
                     text: "A1".into(),
+                    source_text: Some("A1".into()),
+                    source_segments: Some(vec!["A1".into()]),
                     phase: None,
                     memory_citation: None,
                 },
@@ -1857,6 +1932,8 @@ mod tests {
                 ThreadItem::AgentMessage {
                     id: "item-4".into(),
                     text: "A3".into(),
+                    source_text: Some("A3".into()),
+                    source_segments: Some(vec!["A3".into()]),
                     phase: None,
                     memory_citation: None,
                 },

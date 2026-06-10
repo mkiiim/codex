@@ -145,6 +145,7 @@ fn write_rollout_with_user_message(
                     id: thread_id,
                     forked_from_id: None,
                     parent_thread_id: None,
+                    branch_context: None,
                     timestamp: "2026-06-01T14:26:25Z".to_string(),
                     cwd: home.to_path_buf(),
                     originator: "test".to_string(),

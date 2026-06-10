@@ -548,6 +548,71 @@ pub struct ThreadForkParams {
     #[experimental("thread/fork.excludeTurns")]
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_turns: bool,
+
+    /// Branch point within the source thread's assistant reply history.
+    ///
+    /// When present, the forked thread's history is truncated at this anchor so
+    /// the new thread diverges from a specific line within a specific assistant
+    /// response. When absent the fork starts from the end of the thread.
+    #[experimental("thread/fork.snapshot")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub snapshot: Option<ThreadForkSnapshot>,
+
+    /// Stable provenance anchor for a line-level branch.
+    ///
+    /// Unlike `snapshot`, this must remain anchored to the exact assistant
+    /// reply where the branch was created even if that reply was the latest
+    /// one at branch time.
+    #[experimental("thread/fork.branchOriginSnapshot")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub branch_origin_snapshot: Option<ThreadForkSnapshot>,
+
+    /// Nesting depth of the new branch (parent depth + 1). Populated only for
+    /// line-level branches created via the TUI `/branch-from` command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub branch_depth: Option<u32>,
+
+    /// Short label summarising the text selected as the branch anchor point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub branch_selection_summary: Option<String>,
+
+    /// Summary of the assistant reply content preceding the branch point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub branch_anchor_head_summary: Option<String>,
+
+    /// Summary of the assistant reply content at and after the branch point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub branch_anchor_tail_summary: Option<String>,
+}
+
+/// Identifies the precise point within an assistant reply from which a branch thread diverges.
+///
+/// `LatestAssistantReadAnchor` targets the most-recent assistant reply using coordinates relative
+/// to the raw markdown source. `AssistantReadAnchor` targets an earlier reply by index.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum ThreadForkSnapshot {
+    Interrupted,
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    AssistantReadAnchor {
+        assistant_message_index: u32,
+        source_line_index: u32,
+        source_byte_offset: u32,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    LatestAssistantReadAnchor {
+        source_line_index: u32,
+        source_byte_offset: u32,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]

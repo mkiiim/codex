@@ -15,6 +15,7 @@ pub(super) struct ThreadEventSnapshot {
     pub(super) input_state: Option<ThreadInputState>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub(super) enum ThreadBufferedEvent {
     Notification(ServerNotification),

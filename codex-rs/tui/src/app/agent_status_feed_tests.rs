@@ -31,6 +31,8 @@ fn agent_status_uses_bounded_buffered_activity() {
             item: ThreadItem::AgentMessage {
                 id: "message-1".to_string(),
                 text: "Finished checking the focused TUI tests.".to_string(),
+                source_text: None,
+                source_segments: None,
                 phase: None,
                 memory_citation: None,
             },

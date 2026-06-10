@@ -1,4 +1,5 @@
 use super::CodexErrorInfo;
+use super::ThreadForkSnapshot;
 use super::ThreadItem;
 use super::ThreadStatus;
 use super::TurnStatus;
@@ -172,6 +173,21 @@ pub struct Thread {
     pub git_info: Option<GitInfo>,
     /// Optional user-facing thread title.
     pub name: Option<String>,
+    /// Branch nesting depth: 0 for root threads, 1 for first-level branches, etc.
+    #[ts(type = "number | null")]
+    pub branch_depth: Option<u32>,
+    /// Short summary of the text selected as the branch anchor point.
+    #[ts(type = "string | null")]
+    pub branch_anchor_summary: Option<String>,
+    /// Summary of the assistant reply content preceding the branch point.
+    #[ts(type = "string | null")]
+    pub branch_anchor_head_summary: Option<String>,
+    /// Summary of the assistant reply content at and after the branch point.
+    #[ts(type = "string | null")]
+    pub branch_anchor_tail_summary: Option<String>,
+    /// Records the exact reply and offset where the thread branched.
+    #[ts(type = "ThreadForkSnapshot | null")]
+    pub branch_origin_snapshot: Option<ThreadForkSnapshot>,
     /// Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read`
     /// (when `includeTurns` is true) responses.
     /// For all other responses and notifications returning a Thread,

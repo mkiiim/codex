@@ -182,6 +182,11 @@ fn thread_resume_response_round_trips_initial_turns_page() {
             agent_role: None,
             git_info: None,
             name: None,
+            branch_depth: None,
+            branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
             turns: Vec::new(),
         },
         model: "gpt-5".to_string(),
@@ -2445,6 +2450,8 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
         ThreadItem::AgentMessage {
             id: "agent-1".to_string(),
             text: "Hello world".to_string(),
+            source_text: Some("Hello world".to_string()),
+            source_segments: Some(vec!["Hello ".to_string(), "world".to_string()]),
             phase: None,
             memory_citation: None,
         }
@@ -2472,6 +2479,8 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
         ThreadItem::AgentMessage {
             id: "agent-2".to_string(),
             text: "final".to_string(),
+            source_text: Some("final".to_string()),
+            source_segments: Some(vec!["final".to_string()]),
             phase: Some(MessagePhase::FinalAnswer),
             memory_citation: Some(MemoryCitation {
                 entries: vec![MemoryCitationEntry {

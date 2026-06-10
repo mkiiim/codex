@@ -50,6 +50,7 @@ use crate::state_db;
 use crate::state_db::StateDbHandle;
 use codex_git_utils::collect_git_info;
 use codex_git_utils::get_git_repo_root;
+use codex_protocol::protocol::BranchContext;
 use codex_protocol::protocol::GitInfo as ProtocolGitInfo;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::MultiAgentVersion;
@@ -89,6 +90,7 @@ pub enum RolloutRecorderParams {
         base_instructions: BaseInstructions,
         dynamic_tools: Vec<DynamicToolSpec>,
         multi_agent_version: Option<MultiAgentVersion>,
+        branch_context: Option<BranchContext>,
     },
     Resume {
         path: PathBuf,
@@ -175,6 +177,7 @@ impl RolloutRecorderParams {
             base_instructions,
             dynamic_tools,
             multi_agent_version: None,
+            branch_context: None,
         }
     }
 
@@ -188,6 +191,17 @@ impl RolloutRecorderParams {
         } = &mut self
         {
             *version = multi_agent_version;
+        }
+        self
+    }
+
+    pub fn with_branch_context(mut self, branch_context: Option<BranchContext>) -> Self {
+        if let Self::Create {
+            branch_context: ctx,
+            ..
+        } = &mut self
+        {
+            *ctx = branch_context;
         }
         self
     }
@@ -679,6 +693,7 @@ impl RolloutRecorder {
                 base_instructions,
                 dynamic_tools,
                 multi_agent_version,
+                branch_context,
             } => {
                 let log_file_info = precompute_log_file_info(config, conversation_id)?;
                 let path = log_file_info.path.clone();
@@ -697,6 +712,7 @@ impl RolloutRecorder {
                     id: session_id,
                     forked_from_id,
                     parent_thread_id,
+                    branch_context,
                     timestamp,
                     cwd: config.cwd().to_path_buf(),
                     originator: originator().value,

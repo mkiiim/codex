@@ -10,6 +10,7 @@ use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSpecialPath;
+use codex_protocol::protocol::BranchContext;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
@@ -105,6 +106,8 @@ pub(crate) struct SessionConfiguration {
     pub(super) dynamic_tools: Vec<DynamicToolSpec>,
     pub(super) inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
     pub(super) user_shell_override: Option<shell::Shell>,
+    /// Branch metadata for threads created via line-level branching.
+    pub(super) branch_context: Option<BranchContext>,
 }
 
 impl SessionConfiguration {
@@ -540,6 +543,7 @@ impl Session {
                                 },
                                 dynamic_tools: session_configuration.dynamic_tools.clone(),
                                 multi_agent_version: initial_multi_agent_version,
+                                branch_context: session_configuration.branch_context.clone(),
                                 metadata: ThreadPersistenceMetadata {
                                     cwd: Some(config.cwd.to_path_buf()),
                                     model_provider: config.model_provider_id.clone(),

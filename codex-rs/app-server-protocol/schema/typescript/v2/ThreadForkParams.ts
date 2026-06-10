@@ -27,4 +27,17 @@ model?: string | null, modelProvider?: string | null, serviceTier?: string | nul
 approvalsReviewer?: ApprovalsReviewer | null, sandbox?: SandboxMode | null, config?: { [key in string]?: JsonValue } | null, baseInstructions?: string | null, developerInstructions?: string | null, ephemeral?: boolean, /**
  * Optional client-supplied analytics source classification for this forked thread.
  */
-threadSource?: ThreadSource | null};
+threadSource?: ThreadSource | null, /**
+ * Nesting depth of the new branch (parent depth + 1). Populated only for
+ * line-level branches created via the TUI `/branch-from` command.
+ */
+branchDepth?: number | null, /**
+ * Short label summarising the text selected as the branch anchor point.
+ */
+branchSelectionSummary?: string | null, /**
+ * Summary of the assistant reply content preceding the branch point.
+ */
+branchAnchorHeadSummary?: string | null, /**
+ * Summary of the assistant reply content at and after the branch point.
+ */
+branchAnchorTailSummary?: string | null};

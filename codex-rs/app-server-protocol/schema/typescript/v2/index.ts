@@ -379,6 +379,7 @@ export type { ThreadDeleteResponse } from "./ThreadDeleteResponse";
 export type { ThreadDeletedNotification } from "./ThreadDeletedNotification";
 export type { ThreadForkParams } from "./ThreadForkParams";
 export type { ThreadForkResponse } from "./ThreadForkResponse";
+export type { ThreadForkSnapshot } from "./ThreadForkSnapshot";
 export type { ThreadGoal } from "./ThreadGoal";
 export type { ThreadGoalClearParams } from "./ThreadGoalClearParams";
 export type { ThreadGoalClearResponse } from "./ThreadGoalClearResponse";

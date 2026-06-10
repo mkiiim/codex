@@ -1,6 +1,7 @@
 use super::*;
 use crate::error_code::method_not_found;
 use codex_app_server_protocol::SelectedCapabilityRoot;
+use codex_app_server_protocol::ThreadForkSnapshot as ApiThreadForkSnapshot;
 use codex_extension_api::ExtensionDataInit;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
@@ -1910,11 +1911,14 @@ impl ThreadRequestProcessor {
         let fallback_provider = self.config.model_provider_id.clone();
 
         for stored_thread in stored_threads {
-            let (thread, _) = thread_from_stored_thread(
+            let (mut thread, _) = thread_from_stored_thread(
                 stored_thread,
                 fallback_provider.as_str(),
                 &self.config.cwd,
             );
+            if let Some(path) = thread.path.clone() {
+                apply_branch_context_from_rollout(&mut thread, &path).await;
+            }
             status_ids.push(thread.id.clone());
             threads.push(thread);
         }
@@ -2202,6 +2206,9 @@ impl ThreadRequestProcessor {
             thread_status,
             has_live_in_progress_turn,
         );
+        if let Some(path) = thread.path.clone() {
+            apply_branch_context_from_rollout(&mut thread, &path).await;
+        }
         Ok(thread)
     }
 
@@ -2687,6 +2694,7 @@ impl ThreadRequestProcessor {
                         return Ok(());
                     }
                 };
+                apply_branch_context_from_rollout(&mut thread, rollout_path.as_path()).await;
                 thread.thread_source = codex_thread
                     .config_snapshot()
                     .await
@@ -3260,7 +3268,27 @@ impl ThreadRequestProcessor {
             ephemeral,
             thread_source,
             exclude_turns,
+            snapshot: api_snapshot,
+            branch_origin_snapshot: api_branch_origin_snapshot,
+            branch_depth,
+            branch_selection_summary,
+            branch_anchor_head_summary,
+            branch_anchor_tail_summary,
         } = params;
+        let branch_origin = api_branch_origin_snapshot
+            .or_else(|| api_snapshot.clone())
+            .filter(|snapshot| !matches!(snapshot, ApiThreadForkSnapshot::Interrupted))
+            .map(api_thread_fork_snapshot_to_branch_origin);
+        let fork_snapshot = api_snapshot
+            .map(api_thread_fork_snapshot_to_core)
+            .unwrap_or(ForkSnapshot::Interrupted);
+        let branch_context = branch_depth.map(|depth| BranchContext {
+            depth,
+            selection_summary: branch_selection_summary,
+            anchor_head_summary: branch_anchor_head_summary,
+            anchor_tail_summary: branch_anchor_tail_summary,
+            origin: branch_origin,
+        });
         let include_turns = !exclude_turns;
         if sandbox.is_some() && permissions.is_some() {
             return Err(invalid_request(
@@ -3341,7 +3369,7 @@ impl ThreadRequestProcessor {
         } = self
             .thread_manager
             .fork_thread_from_history(
-                ForkSnapshot::Interrupted,
+                fork_snapshot,
                 config,
                 InitialHistory::Resumed(ResumedHistory {
                     conversation_id: source_thread_id,
@@ -3350,6 +3378,7 @@ impl ThreadRequestProcessor {
                 }),
                 thread_source.map(Into::into),
                 self.request_trace_context(&request_id).await,
+                branch_context,
             )
             .await
             .map_err(|err| match err {
@@ -3403,11 +3432,44 @@ impl ThreadRequestProcessor {
             let stored_thread = self
                 .read_stored_thread_for_new_fork(thread_id, include_turns)
                 .await?;
-            self.stored_thread_to_api_thread(
+            let (mut thread, history) = thread_from_stored_thread(
                 stored_thread,
                 fallback_model_provider.as_str(),
-                include_turns,
-            )
+                &self.config.cwd,
+            );
+            if include_turns {
+                if let Some(history) = history {
+                    let display_items = match &fork_snapshot {
+                        codex_core::ForkSnapshot::AssistantReadAnchor {
+                            assistant_message_index,
+                            source_line_index,
+                            source_byte_offset,
+                        } => codex_core::truncate_rollout_at_assistant_read_anchor(
+                            &history.items,
+                            *assistant_message_index,
+                            *source_line_index,
+                            *source_byte_offset,
+                        )
+                        .unwrap_or_else(|_| history.items.clone()),
+                        codex_core::ForkSnapshot::LatestAssistantReadAnchor {
+                            source_line_index,
+                            source_byte_offset,
+                        } => codex_core::truncate_rollout_at_latest_assistant_read_anchor(
+                            &history.items,
+                            *source_line_index,
+                            *source_byte_offset,
+                        )
+                        .unwrap_or_else(|_| history.items.clone()),
+                        _ => history.items.clone(),
+                    };
+                    populate_thread_turns_from_history(
+                        &mut thread,
+                        &display_items,
+                        /*active_turn*/ None,
+                    );
+                }
+            }
+            thread
         } else {
             let config_snapshot = forked_thread.config_snapshot().await;
             let mut thread = build_thread_from_snapshot(
@@ -3419,9 +3481,32 @@ impl ThreadRequestProcessor {
             thread.preview = preview_from_rollout_items(&history_items);
             thread.forked_from_id = Some(source_thread_id.to_string());
             if include_turns {
+                let display_items = match &fork_snapshot {
+                    codex_core::ForkSnapshot::AssistantReadAnchor {
+                        assistant_message_index,
+                        source_line_index,
+                        source_byte_offset,
+                    } => codex_core::truncate_rollout_at_assistant_read_anchor(
+                        &history_items,
+                        *assistant_message_index,
+                        *source_line_index,
+                        *source_byte_offset,
+                    )
+                    .unwrap_or_else(|_| history_items.clone()),
+                    codex_core::ForkSnapshot::LatestAssistantReadAnchor {
+                        source_line_index,
+                        source_byte_offset,
+                    } => codex_core::truncate_rollout_at_latest_assistant_read_anchor(
+                        &history_items,
+                        *source_line_index,
+                        *source_byte_offset,
+                    )
+                    .unwrap_or_else(|_| history_items.clone()),
+                    _ => history_items.clone(),
+                };
                 populate_thread_turns_from_history(
                     &mut thread,
-                    &history_items,
+                    &display_items,
                     /*active_turn*/ None,
                 );
             }
@@ -4123,9 +4208,52 @@ pub(crate) fn thread_from_stored_thread(
         thread_source: thread.thread_source.map(Into::into),
         git_info,
         name: thread.name,
+        branch_depth: None,
+        branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
         turns: Vec::new(),
     };
     (thread, history)
+}
+
+/// Read `SessionMeta` from the head of a rollout file and populate branch-related
+/// fields on the thread.  `forked_from_id` is not stored in the rollout index used
+/// by `list_threads`, so it must be read from the rollout itself.  Branch depth and
+/// anchor summary are likewise sourced from `SessionMeta.branch_context`.
+/// Silently no-ops when the rollout is absent or unreadable.
+async fn apply_branch_context_from_rollout(thread: &mut Thread, path: &std::path::Path) {
+    let Ok(meta_line) = codex_core::read_session_meta_line(path).await else {
+        return;
+    };
+    if thread.forked_from_id.is_none() {
+        thread.forked_from_id = meta_line.meta.forked_from_id.map(|id| id.to_string());
+    }
+    if let Some(branch_context) = meta_line.meta.branch_context {
+        thread.branch_depth = Some(branch_context.depth);
+        thread.branch_anchor_summary = branch_context.selection_summary.clone();
+        thread.branch_anchor_head_summary = branch_context.anchor_head_summary.clone();
+        thread.branch_anchor_tail_summary = branch_context.anchor_tail_summary.clone();
+        thread.branch_origin_snapshot = branch_context.origin.map(|origin| match origin {
+            codex_protocol::protocol::BranchOrigin::AssistantReadAnchor {
+                assistant_message_index,
+                source_line_index,
+                source_byte_offset,
+            } => ApiThreadForkSnapshot::AssistantReadAnchor {
+                assistant_message_index,
+                source_line_index,
+                source_byte_offset,
+            },
+            codex_protocol::protocol::BranchOrigin::LatestAssistantReadAnchor {
+                source_line_index,
+                source_byte_offset,
+            } => ApiThreadForkSnapshot::LatestAssistantReadAnchor {
+                source_line_index,
+                source_byte_offset,
+            },
+        });
+    }
 }
 
 fn summary_from_stored_thread(
@@ -4328,6 +4456,11 @@ fn build_thread_from_snapshot(
         thread_source: config_snapshot.thread_source.clone().map(Into::into),
         git_info: None,
         name: None,
+        branch_depth: None,
+        branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
         turns: Vec::new(),
     }
 }
@@ -4371,6 +4504,54 @@ fn build_thread_from_loaded_snapshot(
         config_snapshot,
         loaded_thread.rollout_path(),
     )
+}
+
+fn api_thread_fork_snapshot_to_branch_origin(
+    snapshot: ApiThreadForkSnapshot,
+) -> codex_protocol::protocol::BranchOrigin {
+    match snapshot {
+        ApiThreadForkSnapshot::Interrupted => {
+            unreachable!("interrupted snapshots are not branch origins")
+        }
+        ApiThreadForkSnapshot::LatestAssistantReadAnchor {
+            source_line_index,
+            source_byte_offset,
+        } => codex_protocol::protocol::BranchOrigin::LatestAssistantReadAnchor {
+            source_line_index,
+            source_byte_offset,
+        },
+        ApiThreadForkSnapshot::AssistantReadAnchor {
+            assistant_message_index,
+            source_line_index,
+            source_byte_offset,
+        } => codex_protocol::protocol::BranchOrigin::AssistantReadAnchor {
+            assistant_message_index,
+            source_line_index,
+            source_byte_offset,
+        },
+    }
+}
+
+fn api_thread_fork_snapshot_to_core(snapshot: ApiThreadForkSnapshot) -> ForkSnapshot {
+    match snapshot {
+        ApiThreadForkSnapshot::Interrupted => ForkSnapshot::Interrupted,
+        ApiThreadForkSnapshot::LatestAssistantReadAnchor {
+            source_line_index,
+            source_byte_offset,
+        } => ForkSnapshot::LatestAssistantReadAnchor {
+            source_line_index: source_line_index as usize,
+            source_byte_offset: source_byte_offset as usize,
+        },
+        ApiThreadForkSnapshot::AssistantReadAnchor {
+            assistant_message_index,
+            source_line_index,
+            source_byte_offset,
+        } => ForkSnapshot::AssistantReadAnchor {
+            assistant_message_index: assistant_message_index as usize,
+            source_line_index: source_line_index as usize,
+            source_byte_offset: source_byte_offset as usize,
+        },
+    }
 }
 
 #[cfg(test)]

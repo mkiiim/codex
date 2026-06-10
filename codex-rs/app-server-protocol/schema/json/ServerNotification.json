@@ -3363,6 +3363,47 @@
             "null"
           ]
         },
+        "branchAnchorHeadSummary": {
+          "description": "Summary of the assistant reply content preceding the branch point.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branchAnchorSummary": {
+          "description": "Short summary of the text selected as the branch anchor point.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branchAnchorTailSummary": {
+          "description": "Summary of the assistant reply content at and after the branch point.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branchDepth": {
+          "description": "Branch nesting depth: 0 for root threads, 1 for first-level branches, etc.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "branchOriginSnapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadForkSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Records the exact reply and offset where the thread branched."
+        },
         "cliVersion": {
           "description": "Version of the CLI that created the thread.",
           "type": "string"
@@ -3533,6 +3574,89 @@
         "threadId"
       ],
       "type": "object"
+    },
+    "ThreadForkSnapshot": {
+      "description": "Identifies the precise point within an assistant reply from which a branch thread diverges.\n\n`LatestAssistantReadAnchor` targets the most-recent assistant reply using coordinates relative to the raw markdown source. `AssistantReadAnchor` targets an earlier reply by index.",
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "interrupted"
+              ],
+              "title": "InterruptedThreadForkSnapshotType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "InterruptedThreadForkSnapshot",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "assistantMessageIndex": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "sourceByteOffset": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "sourceLineIndex": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "assistantReadAnchor"
+              ],
+              "title": "AssistantReadAnchorThreadForkSnapshotType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "assistantMessageIndex",
+            "sourceByteOffset",
+            "sourceLineIndex",
+            "type"
+          ],
+          "title": "AssistantReadAnchorThreadForkSnapshot",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "sourceByteOffset": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "sourceLineIndex": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "latestAssistantReadAnchor"
+              ],
+              "title": "LatestAssistantReadAnchorThreadForkSnapshotType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sourceByteOffset",
+            "sourceLineIndex",
+            "type"
+          ],
+          "title": "LatestAssistantReadAnchorThreadForkSnapshot",
+          "type": "object"
+        }
+      ]
     },
     "ThreadGoal": {
       "properties": {
@@ -3714,6 +3838,21 @@
                 }
               ],
               "default": null
+            },
+            "sourceSegments": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "sourceText": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "text": {
               "type": "string"

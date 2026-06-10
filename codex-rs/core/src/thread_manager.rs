@@ -37,6 +37,7 @@ use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::protocol::BranchContext;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InitialHistory;
@@ -144,6 +145,25 @@ pub enum ForkSnapshot {
     /// already at a turn boundary, this returns the current persisted history
     /// unchanged.
     Interrupted,
+
+    /// Fork by truncating the latest assistant message at a stable read anchor.
+    ///
+    /// Used by UI flows that identify the branch point from the active/latest
+    /// assistant reply rather than from a persisted transcript ordinal.
+    LatestAssistantReadAnchor {
+        source_line_index: usize,
+        source_byte_offset: usize,
+    },
+
+    /// Fork by truncating a specific older assistant message at a read anchor.
+    ///
+    /// `assistant_message_index` is 0-based over the effective (post-rollback)
+    /// assistant message sequence in the rollout.
+    AssistantReadAnchor {
+        assistant_message_index: usize,
+        source_line_index: usize,
+        source_byte_offset: usize,
+    },
 }
 
 /// Preserve legacy `fork_thread(usize, ...)` callsites by mapping them to the
@@ -617,6 +637,7 @@ impl ThreadManager {
             options.environments,
             options.thread_extension_init,
             /*user_shell_override*/ None,
+            /*branch_context*/ None,
         ))
         .await
     }
@@ -653,7 +674,7 @@ impl ThreadManager {
                 &options.config,
                 inherited_multi_agent_version,
             ),
-        );
+        )?;
         self.start_thread_with_options_and_fork_source(options, Some(forked_from_thread_id))
             .await
     }
@@ -706,6 +727,7 @@ impl ThreadManager {
             environments,
             /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ None,
+            /*branch_context*/ None,
         ))
         .await
     }
@@ -733,6 +755,7 @@ impl ThreadManager {
             environments,
             /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ Some(user_shell_override),
+            /*branch_context*/ None,
         ))
         .await
     }
@@ -769,6 +792,7 @@ impl ThreadManager {
             environments,
             /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ Some(user_shell_override),
+            /*branch_context*/ None,
         ))
         .await
     }
@@ -848,8 +872,15 @@ impl ThreadManager {
     {
         let snapshot = snapshot.into();
         let history = self.initial_history_from_rollout_path(path).await?;
-        self.fork_thread_from_history(snapshot, config, history, thread_source, parent_trace)
-            .await
+        self.fork_thread_from_history(
+            snapshot,
+            config,
+            history,
+            thread_source,
+            parent_trace,
+            /*branch_context*/ None,
+        )
+        .await
     }
 
     async fn initial_history_from_rollout_path(
@@ -878,6 +909,7 @@ impl ThreadManager {
         history: InitialHistory,
         thread_source: Option<ThreadSource>,
         parent_trace: Option<W3cTraceContext>,
+        branch_context: Option<BranchContext>,
     ) -> CodexResult<NewThread>
     where
         S: Into<ForkSnapshot>,
@@ -888,6 +920,7 @@ impl ThreadManager {
             history,
             thread_source,
             parent_trace,
+            branch_context,
         )
         .await
     }
@@ -899,6 +932,7 @@ impl ThreadManager {
         history: InitialHistory,
         thread_source: Option<ThreadSource>,
         parent_trace: Option<W3cTraceContext>,
+        branch_context: Option<BranchContext>,
     ) -> CodexResult<NewThread> {
         // `forked_from_id()` describes this history's existing lineage. When
         // forking a resumed thread, the child copies the resumed thread itself.
@@ -919,7 +953,7 @@ impl ThreadManager {
             .await;
         let interrupted_marker =
             InterruptedTurnHistoryMarker::from_config_and_version(&config, multi_agent_version);
-        let history = fork_history_from_snapshot(snapshot, history, interrupted_marker);
+        let history = fork_history_from_snapshot(snapshot, history, interrupted_marker)?;
         let environments = default_thread_environment_selections(
             self.state.environment_manager.as_ref(),
             &config.cwd,
@@ -938,6 +972,7 @@ impl ThreadManager {
             environments,
             /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ None,
+            branch_context,
         ))
         .await
     }
@@ -1144,6 +1179,7 @@ impl ThreadManagerState {
             environments,
             /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ None,
+            /*branch_context*/ None,
         ))
         .await
     }
@@ -1181,6 +1217,7 @@ impl ThreadManagerState {
             environments,
             /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ None,
+            /*branch_context*/ None,
         ))
         .await
     }
@@ -1219,6 +1256,7 @@ impl ThreadManagerState {
             environments,
             /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ None,
+            /*branch_context*/ None,
         ))
         .await
     }
@@ -1240,6 +1278,7 @@ impl ThreadManagerState {
         environments: Vec<TurnEnvironmentSelection>,
         thread_extension_init: ExtensionDataInit,
         user_shell_override: Option<crate::shell::Shell>,
+        branch_context: Option<BranchContext>,
     ) -> CodexResult<NewThread> {
         Box::pin(self.spawn_thread_with_source(
             config,
@@ -1258,6 +1297,7 @@ impl ThreadManagerState {
             environments,
             thread_extension_init,
             user_shell_override,
+            branch_context,
         ))
         .await
     }
@@ -1281,6 +1321,7 @@ impl ThreadManagerState {
         environments: Vec<TurnEnvironmentSelection>,
         thread_extension_init: ExtensionDataInit,
         user_shell_override: Option<crate::shell::Shell>,
+        branch_context: Option<BranchContext>,
     ) -> CodexResult<NewThread> {
         let is_resumed_thread = matches!(&initial_history, InitialHistory::Resumed(_));
         if let InitialHistory::Resumed(resumed) = &initial_history {
@@ -1349,6 +1390,7 @@ impl ThreadManagerState {
             thread_store: Arc::clone(&self.thread_store),
             attestation_provider: self.attestation_provider.clone(),
             inherited_multi_agent_version: multi_agent_version,
+            branch_context,
         }))
         .await?;
         let new_thread = self
@@ -1573,12 +1615,12 @@ fn fork_history_from_snapshot(
     snapshot: ForkSnapshot,
     history: InitialHistory,
     interrupted_marker: InterruptedTurnHistoryMarker,
-) -> InitialHistory {
+) -> CodexResult<InitialHistory> {
     let snapshot_state = snapshot_turn_state(&history);
     match snapshot {
-        ForkSnapshot::TruncateBeforeNthUserMessage(nth_user_message) => {
-            truncate_before_nth_user_message(history, nth_user_message, &snapshot_state)
-        }
+        ForkSnapshot::TruncateBeforeNthUserMessage(nth_user_message) => Ok(
+            truncate_before_nth_user_message(history, nth_user_message, &snapshot_state),
+        ),
         ForkSnapshot::Interrupted => {
             let history = match history {
                 InitialHistory::New => InitialHistory::New,
@@ -1586,7 +1628,7 @@ fn fork_history_from_snapshot(
                 InitialHistory::Forked(history) => InitialHistory::Forked(history),
                 InitialHistory::Resumed(resumed) => InitialHistory::Forked(resumed.history),
             };
-            if snapshot_state.ends_mid_turn {
+            Ok(if snapshot_state.ends_mid_turn {
                 append_interrupted_boundary(
                     history,
                     snapshot_state.active_turn_id,
@@ -1594,9 +1636,52 @@ fn fork_history_from_snapshot(
                 )
             } else {
                 history
-            }
+            })
         }
+        ForkSnapshot::LatestAssistantReadAnchor {
+            source_line_index,
+            source_byte_offset,
+        } => apply_assistant_read_anchor(history, |items| {
+            truncation::truncate_rollout_at_latest_assistant_read_anchor(
+                items,
+                source_line_index,
+                source_byte_offset,
+            )
+        }),
+        ForkSnapshot::AssistantReadAnchor {
+            assistant_message_index,
+            source_line_index,
+            source_byte_offset,
+        } => apply_assistant_read_anchor(history, |items| {
+            truncation::truncate_rollout_at_assistant_read_anchor(
+                items,
+                assistant_message_index,
+                source_line_index,
+                source_byte_offset,
+            )
+        }),
     }
+}
+
+/// Apply an assistant-read-anchor truncation function to the rollout items in
+/// `history`, returning the truncated result as a `Forked` history.
+fn apply_assistant_read_anchor(
+    history: InitialHistory,
+    truncate: impl FnOnce(
+        &[codex_protocol::protocol::RolloutItem],
+    ) -> CodexResult<Vec<codex_protocol::protocol::RolloutItem>>,
+) -> CodexResult<InitialHistory> {
+    let items = match &history {
+        InitialHistory::Forked(items) => items.as_slice(),
+        InitialHistory::Resumed(resumed) => resumed.history.as_slice(),
+        InitialHistory::New | InitialHistory::Cleared => {
+            return Err(CodexErr::InvalidRequest(
+                "assistant read anchor requires existing history".to_string(),
+            ));
+        }
+    };
+    let truncated = truncate(items)?;
+    Ok(InitialHistory::Forked(truncated))
 }
 
 /// Append the same persisted interrupt boundary used by the live interrupt path

@@ -82,6 +82,26 @@ gitInfo: GitInfo | null,
  */
 name: string | null,
 /**
+ * Branch nesting depth: 0 for root threads, 1 for first-level branches, etc.
+ */
+branchDepth: number | null,
+/**
+ * Short summary of the text selected as the branch anchor point.
+ */
+branchAnchorSummary: string | null,
+/**
+ * Summary of the assistant reply content preceding the branch point.
+ */
+branchAnchorHeadSummary: string | null,
+/**
+ * Summary of the assistant reply content at and after the branch point.
+ */
+branchAnchorTailSummary: string | null,
+/**
+ * Records the exact reply and offset where the thread branched.
+ */
+branchOriginSnapshot: ThreadForkSnapshot | null,
+/**
  * Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read`
  * (when `includeTurns` is true) responses.
  * For all other responses and notifications returning a Thread,

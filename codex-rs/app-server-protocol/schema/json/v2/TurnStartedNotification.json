@@ -730,6 +730,21 @@
               ],
               "default": null
             },
+            "sourceSegments": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "sourceText": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "text": {
               "type": "string"
             },

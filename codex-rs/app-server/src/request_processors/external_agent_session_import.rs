@@ -180,6 +180,7 @@ impl ExternalAgentSessionImporter {
             extra_config: None,
             forked_from_id: None,
             parent_thread_id: None,
+            branch_context: None,
             source: source.clone(),
             thread_source: None,
             base_instructions: BaseInstructions {

@@ -459,6 +459,7 @@ fn write_rollout(path: &std::path::Path, thread_id: ThreadId, message: &str) -> 
             id: thread_id,
             forked_from_id: None,
             parent_thread_id: None,
+            branch_context: None,
             timestamp: "2025-01-03T12:00:00Z".to_string(),
             cwd: parent.to_path_buf(),
             originator: "test".to_string(),

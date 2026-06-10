@@ -330,6 +330,11 @@ pub(crate) fn summary_to_thread(
         thread_source: None,
         git_info,
         name: None,
+        branch_depth: None,
+        branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
         turns: Vec::new(),
     }
 }

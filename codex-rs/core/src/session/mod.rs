@@ -423,6 +423,7 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) thread_store: Arc<dyn ThreadStore>,
     pub(crate) attestation_provider: Option<Arc<dyn AttestationProvider>>,
     pub(crate) inherited_multi_agent_version: Option<MultiAgentVersion>,
+    pub(crate) branch_context: Option<codex_protocol::protocol::BranchContext>,
 }
 
 pub(crate) fn resolve_multi_agent_version(
@@ -504,6 +505,7 @@ impl Codex {
             thread_store,
             attestation_provider,
             inherited_multi_agent_version,
+            branch_context,
         } = args;
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
@@ -623,6 +625,7 @@ impl Codex {
             dynamic_tools,
             inherited_shell_snapshot,
             user_shell_override,
+            branch_context,
         };
 
         // Generate a unique ID for the lifetime of this Codex session.

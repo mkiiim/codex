@@ -1134,6 +1134,7 @@ impl TurnRequestProcessor {
                 }),
                 /*thread_source*/ None,
                 self.request_trace_context(request_id).await,
+                /*branch_context*/ None,
             )
             .await
             .map_err(|err| {

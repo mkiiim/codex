@@ -1261,6 +1261,7 @@ async fn test_updated_at_uses_file_mtime() -> Result<()> {
                 id: conversation_id,
                 forked_from_id: None,
                 parent_thread_id: None,
+                branch_context: None,
                 timestamp: ts.to_string(),
                 cwd: ".".into(),
                 originator: "test_originator".into(),

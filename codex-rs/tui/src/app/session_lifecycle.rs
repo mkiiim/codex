@@ -611,6 +611,10 @@ impl App {
             initial_user_message,
         );
         self.replace_chat_widget(ChatWidget::new_with_app_event(init));
+        // Resume/fork attachment must drop the outgoing thread's scrollback, not just app-owned
+        // transcript cells, or scrolling up after the switch can still reveal stale history from
+        // the previous thread.
+        self.reset_for_thread_switch(tui)?;
         self.enqueue_primary_thread_session(started.session, started.turns)
             .await?;
         self.backfill_loaded_subagent_threads(app_server).await;
@@ -733,6 +737,8 @@ impl App {
         tui: &mut tui::Tui,
         app_server: &mut AppServerSession,
         target_session: SessionTarget,
+        emit_resumed_notice: bool,
+        outgoing_summary: OutgoingSessionSummary,
     ) -> Result<AppRunControl> {
         if self.ignore_same_thread_resume(&target_session) {
             tui.frame_requester().schedule_frame();
@@ -776,18 +782,30 @@ impl App {
         };
         self.apply_runtime_policy_overrides(&mut resume_config);
 
-        let summary = session_summary(
-            self.chat_widget.token_usage(),
-            self.chat_widget.thread_id(),
-            self.chat_widget.thread_name(),
-            self.chat_widget.rollout_path().as_deref(),
-        );
+        let outgoing_token_usage = self.chat_widget.token_usage();
+        let previous_thread_usage_line = match outgoing_summary {
+            OutgoingSessionSummary::AddTokenUsageToBranchNotice => {
+                (!outgoing_token_usage.is_zero()).then(|| outgoing_token_usage.to_string())
+            }
+            OutgoingSessionSummary::Emit => None,
+        };
+        let summary = match outgoing_summary {
+            OutgoingSessionSummary::Emit => session_summary(
+                outgoing_token_usage,
+                self.chat_widget.thread_id(),
+                self.chat_widget.thread_name(),
+                self.chat_widget.rollout_path().as_deref(),
+            ),
+            OutgoingSessionSummary::AddTokenUsageToBranchNotice => None,
+        };
         match app_server
             .resume_thread(resume_config.clone(), target_session.thread_id)
             .await
         {
             Ok(resumed) => {
                 let resumed_thread_id = resumed.session.thread_id;
+                let resumed_branch_depth = resumed.session.branch_depth;
+                let resumed_branch_anchor_summary = resumed.session.branch_anchor_summary.clone();
                 self.shutdown_current_thread(app_server).await;
                 self.config = resume_config;
                 tui.set_notification_settings(
@@ -814,6 +832,20 @@ impl App {
                                 lines.push(spans.into());
                             }
                             self.chat_widget.add_plain_history_lines(lines);
+                        }
+                        let branch_depth = usize::try_from(resumed_branch_depth.unwrap_or(0))
+                            .unwrap_or(usize::MAX);
+                        if branch_depth > 0 && emit_resumed_notice {
+                            let suffix =
+                                crate::branch_chrome::branch_thread_id_suffix(resumed_thread_id);
+                            let notice = crate::branch_chrome::BranchStateNoticeKind::Resumed {
+                                depth: branch_depth,
+                                selection_summary: resumed_branch_anchor_summary,
+                                previous_thread_usage_line,
+                            };
+                            let title = crate::branch_chrome::branch_state_title(&notice, &suffix);
+                            let body_lines = crate::branch_chrome::branch_state_body(&notice);
+                            self.chat_widget.add_branch_state_notice(title, body_lines);
                         }
                         self.maybe_prompt_resume_paused_goal_after_resume(
                             app_server,

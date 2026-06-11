@@ -811,6 +811,8 @@ async fn plan_implementation_popup_skips_replayed_turn_complete() {
             items: vec![AppServerThreadItem::AgentMessage {
                 id: "msg-plan".to_string(),
                 text: "Plan details".to_string(),
+                source_text: Some("Plan details".to_string()),
+                source_segments: Some(vec!["Plan details".to_string()]),
                 phase: Some(MessagePhase::FinalAnswer),
                 memory_citation: None,
             }],
@@ -849,6 +851,8 @@ async fn plan_implementation_popup_shows_once_when_replay_precedes_live_turn_com
             items: vec![AppServerThreadItem::AgentMessage {
                 id: "msg-plan-replay".to_string(),
                 text: "Plan details".to_string(),
+                source_text: Some("Plan details".to_string()),
+                source_segments: Some(vec!["Plan details".to_string()]),
                 phase: Some(MessagePhase::FinalAnswer),
                 memory_citation: None,
             }],
@@ -1227,6 +1231,9 @@ async fn submit_user_message_emits_structured_plugin_mentions_from_bindings() {
         rollout_path: Some(rollout_file.path().to_path_buf()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     };
     chat.handle_thread_session(configured);
     chat.set_feature_enabled(Feature::Plugins, /*enabled*/ true);
@@ -1419,6 +1426,9 @@ async fn plan_slash_command_with_args_submits_prompt_in_plan_mode() {
         rollout_path: None,
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     };
     chat.handle_thread_session(configured);
 

@@ -1718,6 +1718,9 @@ async fn thread_session_state_from_thread_resume_response(
     .await?;
     state.branch_depth = response.thread.branch_depth;
     state.branch_anchor_summary = response.thread.branch_anchor_summary.clone();
+    state.branch_anchor_head_summary = response.thread.branch_anchor_head_summary.clone();
+    state.branch_anchor_tail_summary = response.thread.branch_anchor_tail_summary.clone();
+    state.branch_origin_snapshot = response.thread.branch_origin_snapshot.clone();
     Ok(state)
 }
 
@@ -1805,6 +1808,9 @@ async fn thread_session_state_from_thread_response(
         fork_parent_title: None,
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
         thread_name,
         model,
         model_provider_id,
@@ -2447,6 +2453,9 @@ mod tests {
                 name: None,
                 branch_depth: None,
                 branch_anchor_summary: None,
+                branch_anchor_head_summary: None,
+                branch_anchor_tail_summary: None,
+                branch_origin_snapshot: None,
                 turns: vec![Turn {
                     id: "turn-1".to_string(),
                     items_view: codex_app_server_protocol::TurnItemsView::Full,
@@ -2462,6 +2471,8 @@ mod tests {
                         codex_app_server_protocol::ThreadItem::AgentMessage {
                             id: "assistant-1".to_string(),
                             text: "assistant reply".to_string(),
+                            source_text: Some("assistant reply".to_string()),
+                            source_segments: Some(vec!["assistant reply".to_string()]),
                             phase: None,
                             memory_citation: None,
                         },

@@ -5739,6 +5739,9 @@ session_picker_view = "dense"
             name: Some(String::from("Named thread")),
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
             turns: Vec::new(),
         };
 
@@ -5776,6 +5779,9 @@ session_picker_view = "dense"
             name: None,
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
             turns: vec![codex_app_server_protocol::Turn {
                 id: String::from("turn-1"),
                 items_view: codex_app_server_protocol::TurnItemsView::Full,
@@ -5791,6 +5797,8 @@ session_picker_view = "dense"
                     ThreadItem::AgentMessage {
                         id: String::from("agent-1"),
                         text: String::from("hello from assistant"),
+                        source_text: Some(String::from("hello from assistant")),
+                        source_segments: Some(vec![String::from("hello from assistant")]),
                         phase: None,
                         memory_citation: None,
                     },
@@ -5847,6 +5855,9 @@ session_picker_view = "dense"
             name: None,
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
             turns: vec![codex_app_server_protocol::Turn {
                 id: String::from("turn-1"),
                 items_view: codex_app_server_protocol::TurnItemsView::Full,
@@ -5907,6 +5918,9 @@ session_picker_view = "dense"
             name: None,
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
             turns: vec![codex_app_server_protocol::Turn {
                 id: String::from("turn-1"),
                 items_view: codex_app_server_protocol::TurnItemsView::Full,

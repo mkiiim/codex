@@ -90,7 +90,13 @@ impl App {
                 {
                     SessionSelection::Resume(target_session) => {
                         match self
-                            .resume_target_session(tui, app_server, target_session)
+                            .resume_target_session(
+                                tui,
+                                app_server,
+                                target_session,
+                                /*emit_resumed_notice*/ true,
+                                OutgoingSessionSummary::Emit,
+                            )
                             .await?
                         {
                             AppRunControl::Continue => {}
@@ -140,7 +146,13 @@ impl App {
                 match crate::lookup_session_target_with_app_server(app_server, &id_or_name).await? {
                     Some(target_session) => {
                         return self
-                            .resume_target_session(tui, app_server, target_session)
+                            .resume_target_session(
+                                tui,
+                                app_server,
+                                target_session,
+                                /*emit_resumed_notice*/ true,
+                                OutgoingSessionSummary::Emit,
+                            )
                             .await;
                     }
                     None => {

@@ -42,6 +42,9 @@ async fn resumed_initial_messages_render_history() {
         rollout_path: Some(rollout_file.path().to_path_buf()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     };
 
     chat.handle_thread_session(configured);
@@ -280,6 +283,9 @@ async fn replayed_user_message_preserves_text_elements_and_local_images() {
         rollout_path: Some(rollout_file.path().to_path_buf()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     };
 
     chat.handle_thread_session(configured);
@@ -354,6 +360,9 @@ async fn replayed_user_message_preserves_remote_image_urls() {
         rollout_path: Some(rollout_file.path().to_path_buf()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     };
 
     chat.handle_thread_session(configured);
@@ -458,6 +467,9 @@ async fn session_configured_syncs_widget_config_permissions_and_cwd() {
         rollout_path: None,
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     };
 
     chat.handle_thread_session(configured);
@@ -533,6 +545,9 @@ async fn session_configured_preserves_profile_workspace_roots() {
         rollout_path: None,
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     };
 
     chat.handle_thread_session(configured);
@@ -582,6 +597,9 @@ async fn session_configured_external_sandbox_keeps_external_runtime_policy() {
         rollout_path: None,
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     };
 
     chat.handle_thread_session(configured);
@@ -625,6 +643,9 @@ async fn replayed_user_message_with_only_remote_images_renders_history_cell() {
         rollout_path: Some(rollout_file.path().to_path_buf()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     };
 
     chat.handle_thread_session(configured);
@@ -685,6 +706,9 @@ async fn replayed_user_message_with_only_local_images_renders_history_cell() {
         rollout_path: Some(rollout_file.path().to_path_buf()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     };
 
     chat.handle_thread_session(configured);
@@ -961,6 +985,9 @@ async fn replayed_reasoning_item_hides_raw_reasoning_when_disabled() {
         rollout_path: None,
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     });
     let _ = drain_insert_history(&mut rx);
 
@@ -1011,6 +1038,9 @@ async fn replayed_reasoning_item_shows_raw_reasoning_when_enabled() {
         rollout_path: None,
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     });
     let _ = drain_insert_history(&mut rx);
 

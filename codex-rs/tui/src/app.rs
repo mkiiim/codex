@@ -424,6 +424,12 @@ pub(crate) enum AppRunControl {
     Exit(ExitReason),
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum OutgoingSessionSummary {
+    Emit,
+    AddTokenUsageToBranchNotice,
+}
+
 #[derive(Debug, Clone)]
 pub enum ExitReason {
     UserRequested,

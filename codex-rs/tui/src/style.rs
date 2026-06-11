@@ -18,6 +18,10 @@ pub fn user_message_style() -> Style {
     user_message_style_for(default_bg())
 }
 
+pub(crate) fn branch_notice_style() -> Style {
+    Style::new().bg(Color::Blue)
+}
+
 pub fn proposed_plan_style() -> Style {
     proposed_plan_style_for(default_bg())
 }

@@ -512,6 +512,9 @@ fn session_configured_event(model: &str) -> ThreadSessionState {
         rollout_path: Some(PathBuf::new()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     }
 }
 
@@ -2413,6 +2416,61 @@ fn agent_markdown_cell_narrow_width_shows_prefix_only() {
 
     let lines = render_lines(&cell.display_lines(/*width*/ 2));
     assert_eq!(lines, vec!["• ".to_string()]);
+}
+
+#[test]
+fn agent_message_cell_renders_inline_branch_marker_snapshot() {
+    let line_text = "One evening, a singer with road dust on her boots stopped near him and asked why he looked so lonely.";
+    let mut cell = AgentMessageCell::new(vec![Line::from(line_text)], /*is_first_line*/ true);
+    cell.add_branch_marker(AgentBranchMarker {
+        source_line_index: 0,
+        source_byte_offset: line_text.find("why").expect("test text should contain why") + 2,
+        branch_depth: 2,
+        branch_id_suffix: "d19d".to_string(),
+        selection_summary: "he looked so lonely".to_string(),
+    });
+
+    insta::assert_snapshot!(
+        render_lines(&cell.display_lines(/*width*/ 80)).join("\n"),
+        @r###"
+• One evening, a singer with road dust on her boots stopped near him and asked
+  why
+
+
+⎇ Branch d2 · d19d: "...he looked so lonely"
+
+
+  he looked so lonely.
+"###
+    );
+}
+
+#[test]
+fn unresolved_branch_markers_event_snapshot() {
+    let cell = new_unresolved_branch_markers_event(vec![
+        UnresolvedBranchMarkerInfo {
+            branch_depth: 6,
+            branch_id_suffix: "74b4".to_string(),
+            selection_summary: "Set clear boundaries for privacy, security".to_string(),
+        },
+        UnresolvedBranchMarkerInfo {
+            branch_depth: 7,
+            branch_id_suffix: "dff9".to_string(),
+            selection_summary: "GST/HST returns on a regular basis.".to_string(),
+        },
+    ]);
+
+    insta::assert_snapshot!(
+        render_lines(&cell.display_lines(/*width*/ 80)).join("\n"),
+        @r###"
+• Some child branches could not be placed inline and are shown here:
+
+
+⎇ Branch d6 · 74b4: "...Set clear boundaries for privacy, security"
+⎇ Branch d7 · dff9: "...GST/HST returns on a regular basis."
+
+"###
+    );
 }
 
 #[test]

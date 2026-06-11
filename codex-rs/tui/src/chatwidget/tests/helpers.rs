@@ -758,6 +758,8 @@ pub(super) fn replay_agent_message(
         AppServerThreadItem::AgentMessage {
             id: item_id.to_string(),
             text: text.into(),
+            source_text: None,
+            source_segments: None,
             phase: Some(MessagePhase::FinalAnswer),
             memory_citation: None,
         },
@@ -906,6 +908,8 @@ pub(super) fn complete_assistant_message(
             item: AppServerThreadItem::AgentMessage {
                 id: item_id.to_string(),
                 text: text.to_string(),
+                source_text: None,
+                source_segments: None,
                 phase,
                 memory_citation: None,
             },

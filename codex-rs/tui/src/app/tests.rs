@@ -14,6 +14,7 @@ use crate::chatwidget::create_initial_user_message;
 use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
 use crate::chatwidget::tests::set_chatgpt_auth;
 use crate::chatwidget::tests::set_fast_mode_test_catalog;
+use crate::custom_terminal::Terminal as CustomTerminal;
 use crate::file_search::FileSearchManager;
 use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::AgentMessageCell;
@@ -23,6 +24,7 @@ use crate::history_cell::UserHistoryCell;
 use crate::history_cell::new_session_info;
 use crate::multi_agents::AgentPickerThreadEntry;
 use crate::multi_agents::SubAgentActivityDisplay;
+use crate::test_backend::VT100Backend;
 use assert_matches::assert_matches;
 
 use crate::app_command::AppCommand as Op;
@@ -94,6 +96,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use crossterm::event::KeyModifiers;
 use insta::assert_snapshot;
 use pretty_assertions::assert_eq;
+use ratatui::layout::Rect;
 use ratatui::prelude::Line;
 use std::path::Path;
 use std::path::PathBuf;
@@ -2237,6 +2240,9 @@ async fn inactive_thread_approval_bubbles_into_active_view() -> Result<()> {
                 rollout_path: Some(test_path_buf("/tmp/agent-rollout.jsonl")),
                 branch_depth: None,
                 branch_anchor_summary: None,
+                branch_anchor_head_summary: None,
+                branch_anchor_tail_summary: None,
+                branch_origin_snapshot: None,
                 ..test_thread_session(agent_thread_id, test_path_buf("/tmp/agent"))
             },
             Vec::new(),
@@ -2398,6 +2404,9 @@ async fn side_defers_subagent_approval_overlay_until_side_exits() -> Result<()> 
                 rollout_path: Some(test_path_buf("/tmp/agent-rollout.jsonl")),
                 branch_depth: None,
                 branch_anchor_summary: None,
+                branch_anchor_head_summary: None,
+                branch_anchor_tail_summary: None,
+                branch_origin_snapshot: None,
                 ..test_thread_session(agent_thread_id, test_path_buf("/tmp/agent"))
             },
             Vec::new(),
@@ -2778,6 +2787,9 @@ async fn inactive_thread_approval_badge_clears_after_turn_completion_notificatio
                 rollout_path: Some(test_path_buf("/tmp/agent-rollout.jsonl")),
                 branch_depth: None,
                 branch_anchor_summary: None,
+                branch_anchor_head_summary: None,
+                branch_anchor_tail_summary: None,
+                branch_origin_snapshot: None,
                 ..test_thread_session(agent_thread_id, test_path_buf("/tmp/agent"))
             },
             Vec::new(),
@@ -2886,6 +2898,9 @@ async fn inactive_thread_started_notification_initializes_replay_session() -> Re
                 name: Some("agent thread".to_string()),
                 branch_depth: None,
                 branch_anchor_summary: None,
+                branch_anchor_head_summary: None,
+                branch_anchor_tail_summary: None,
+                branch_origin_snapshot: None,
                 turns: Vec::new(),
             },
         }),
@@ -2980,6 +2995,9 @@ async fn inactive_thread_started_notification_preserves_primary_model_when_path_
                 name: Some("agent thread".to_string()),
                 branch_depth: None,
                 branch_anchor_summary: None,
+                branch_anchor_head_summary: None,
+                branch_anchor_tail_summary: None,
+                branch_origin_snapshot: None,
                 turns: Vec::new(),
             },
         }),
@@ -3041,6 +3059,9 @@ async fn thread_read_session_state_does_not_reuse_primary_permission_profile() {
         name: Some("read thread".to_string()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
         turns: Vec::new(),
     };
 
@@ -3407,6 +3428,9 @@ async fn side_thread_snapshot_does_not_refresh_from_fork_history() {
             rollout_path: None,
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
             ..test_thread_session(side_thread_id, test_path_buf("/tmp/side"))
         }),
         turns: Vec::new(),
@@ -3726,7 +3750,7 @@ async fn discard_side_thread_removes_agent_navigation_entry() -> Result<()> {
 #[tokio::test]
 async fn discard_side_thread_keeps_local_state_when_server_close_fails() -> Result<()> {
     Box::pin(async {
-        let mut app = make_test_app().await;
+        let mut app = Box::new(make_test_app().await);
         let mut app_server =
             crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref()).await?;
         let parent_thread_id = ThreadId::new();
@@ -3931,6 +3955,9 @@ async fn render_clear_ui_header_after_long_transcript_for_snapshot() -> String {
             rollout_path: Some(PathBuf::new()),
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
         };
         Arc::new(new_session_info(
             app.chat_widget.config_ref(),
@@ -4090,6 +4117,10 @@ async fn make_test_app() -> App {
         primary_session_configured: None,
         pending_primary_events: VecDeque::new(),
         pending_app_server_requests: PendingAppServerRequests::default(),
+        pending_direct_child_branch_markers: Vec::new(),
+        next_assistant_history_cell_index: 0,
+        current_assistant_message_source_line_offset: 0,
+        current_assistant_message_source_byte_offset: 0,
         pending_startup_thread_start: false,
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
@@ -4155,6 +4186,10 @@ async fn make_test_app_with_channels() -> (
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
+            pending_direct_child_branch_markers: Vec::new(),
+            next_assistant_history_cell_index: 0,
+            current_assistant_message_source_line_offset: 0,
+            current_assistant_message_source_byte_offset: 0,
             pending_startup_thread_start: false,
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
@@ -4188,6 +4223,9 @@ fn test_thread_session(thread_id: ThreadId, cwd: PathBuf) -> ThreadSessionState 
         rollout_path: Some(PathBuf::new()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     }
 }
 
@@ -4624,6 +4662,157 @@ fn lines_to_single_string(lines: &[Line<'_>]) -> String {
         .join("\n")
 }
 
+#[tokio::test]
+async fn direct_child_branch_markers_attach_to_continuation_cells() {
+    let mut app = make_test_app().await;
+    let full_source = "line 0\nline 1\nline 2\nline 3 marker".to_string();
+    let marker_offset = full_source
+        .find("line 3 marker")
+        .expect("test source should contain marker line")
+        + "line 3 marker".len();
+    app.pending_direct_child_branch_markers = vec![PendingDirectChildBranchMarker {
+        anchor_kind: PendingDirectChildBranchMarkerAnchor::AssistantRead,
+        assistant_message_index: 0,
+        source_line_index: 0,
+        source_byte_offset: marker_offset,
+        branch_depth: 6,
+        branch_id_suffix: "d19d".to_string(),
+        selection_summary: "branch marker".to_string(),
+        unresolved_reason: None,
+    }];
+
+    let mut first_cell = AgentMessageCell::new_with_raw_markdown(
+        vec![Line::from("line 0"), Line::from("line 1")],
+        /*is_first_line*/ true,
+        Some(full_source.clone()),
+    );
+    app.decorate_inserted_agent_history_cell(&mut first_cell);
+    assert!(
+        !lines_to_single_string(&first_cell.display_lines(/*width*/ 100)).contains("Branch d6")
+    );
+
+    let mut continuation_cell = AgentMessageCell::new_with_raw_markdown(
+        vec![Line::from("line 2"), Line::from("line 3 marker")],
+        /*is_first_line*/ false,
+        Some(full_source),
+    );
+    app.decorate_inserted_agent_history_cell(&mut continuation_cell);
+    let rendered = lines_to_single_string(&continuation_cell.display_lines(/*width*/ 100));
+    assert!(
+        rendered.contains("⎇ Branch d6 · d19d: \"...branch marker\""),
+        "{rendered}"
+    );
+    assert!(app.pending_direct_child_branch_markers.is_empty());
+}
+
+#[tokio::test]
+async fn direct_child_branch_markers_map_offsets_after_markdown_syntax() {
+    let mut app = make_test_app().await;
+    let raw_markdown = "Lead **bold** text\n- target line\n- trailing line";
+    let target_line_end = raw_markdown
+        .find("- target line")
+        .expect("test markdown should contain target line")
+        + "- target line".len();
+    app.pending_direct_child_branch_markers = vec![PendingDirectChildBranchMarker {
+        anchor_kind: PendingDirectChildBranchMarkerAnchor::LatestAssistantRead,
+        assistant_message_index: 0,
+        source_line_index: 0,
+        source_byte_offset: target_line_end,
+        branch_depth: 6,
+        branch_id_suffix: "abcd".to_string(),
+        selection_summary: "target line".to_string(),
+        unresolved_reason: None,
+    }];
+
+    let mut cell = AgentMessageCell::new_with_raw_markdown(
+        vec![
+            Line::from("Lead bold text"),
+            Line::from("- target line"),
+            Line::from("- trailing line"),
+        ],
+        /*is_first_line*/ true,
+        Some(raw_markdown.to_string()),
+    );
+    app.decorate_inserted_agent_history_cell(&mut cell);
+    let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 100));
+
+    let target_idx = rendered
+        .find("- target line")
+        .expect("rendered output should contain target line");
+    let marker_idx = rendered
+        .find("⎇ Branch d6 · abcd: \"...target line\"")
+        .expect("rendered output should contain branch marker");
+    let trailing_idx = rendered
+        .find("- trailing line")
+        .expect("rendered output should contain trailing line");
+    assert!(target_idx < marker_idx, "{rendered}");
+    assert!(marker_idx < trailing_idx, "{rendered}");
+    assert!(app.pending_direct_child_branch_markers.is_empty());
+}
+
+#[tokio::test]
+async fn enqueue_primary_thread_session_flushes_unresolved_branch_markers() -> Result<()> {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let thread_id = ThreadId::new();
+    app.pending_direct_child_branch_markers = vec![PendingDirectChildBranchMarker {
+        anchor_kind: PendingDirectChildBranchMarkerAnchor::AssistantRead,
+        assistant_message_index: 9,
+        source_line_index: 0,
+        source_byte_offset: 42,
+        branch_depth: 1,
+        branch_id_suffix: "a2aa".to_string(),
+        selection_summary: "Best Local AI Performance: Windows/Linux RTX tower".to_string(),
+        unresolved_reason: None,
+    }];
+
+    app.enqueue_primary_thread_session(
+        test_thread_session(thread_id, test_path_buf("/tmp/project")),
+        vec![test_turn(
+            "turn-1",
+            TurnStatus::Completed,
+            vec![ThreadItem::AgentMessage {
+                id: "assistant-1".to_string(),
+                text: "For a single-employee office, I'd narrow it to 3 realistic local stacks."
+                    .to_string(),
+                source_text: Some(
+                    "For a single-employee office, I'd narrow it to 3 realistic local stacks."
+                        .to_string(),
+                ),
+                source_segments: Some(vec![
+                    "For a single-employee office, I'd narrow it to 3 realistic local stacks."
+                        .to_string(),
+                ]),
+                phase: None,
+                memory_citation: None,
+            }],
+        )],
+    )
+    .await?;
+
+    let mut rendered_cells = Vec::new();
+    while let Ok(event) = app_event_rx.try_recv() {
+        match event {
+            AppEvent::InsertHistoryCell(mut cell) => {
+                app.decorate_inserted_agent_history_cell(cell.as_mut());
+                rendered_cells.push(lines_to_single_string(&cell.display_lines(/*width*/ 100)));
+                app.transcript_cells.push(Arc::from(cell));
+            }
+            AppEvent::FlushUnresolvedDirectChildBranchMarkers => {
+                app.flush_unresolved_direct_child_branch_markers();
+            }
+            _ => {}
+        }
+    }
+
+    assert!(app.pending_direct_child_branch_markers.is_empty());
+    assert!(rendered_cells.iter().any(|rendered| {
+        rendered.contains("Some child branches could not be placed inline and are shown here:")
+            && rendered.contains("Branch d1 · a2aa")
+    }));
+
+    Ok(())
+}
+
 fn test_session_telemetry(config: &Config, model: &str) -> SessionTelemetry {
     let model_info = crate::legacy_core::test_support::construct_model_info_offline(model, config);
     SessionTelemetry::new(
@@ -4812,6 +5001,9 @@ async fn backtrack_selection_with_duplicate_history_targets_unique_turn() {
             rollout_path: Some(PathBuf::new()),
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
         };
         Arc::new(new_session_info(
             app.chat_widget.config_ref(),
@@ -4880,6 +5072,9 @@ async fn backtrack_selection_with_duplicate_history_targets_unique_turn() {
             rollout_path: Some(PathBuf::new()),
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
         });
 
     app.backtrack.base_id = Some(base_id);
@@ -5032,6 +5227,9 @@ async fn backtrack_resubmit_preserves_data_image_urls_in_user_turn() {
             rollout_path: Some(PathBuf::new()),
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
         });
 
     let data_image_url = "data:image/png;base64,abc123".to_string();
@@ -5116,6 +5314,8 @@ async fn replay_thread_snapshot_replays_turn_history_in_order() {
                         ThreadItem::AgentMessage {
                             id: "assistant-2".to_string(),
                             text: "done".to_string(),
+                            source_text: Some("done".to_string()),
+                            source_segments: Some(vec!["done".to_string()]),
                             phase: None,
                             memory_citation: None,
                         },
@@ -5400,6 +5600,9 @@ async fn thread_rollback_response_discards_queued_active_thread_events() {
                 name: None,
                 branch_depth: None,
                 branch_anchor_summary: None,
+                branch_anchor_head_summary: None,
+                branch_anchor_tail_summary: None,
+                branch_origin_snapshot: None,
                 turns: Vec::new(),
             },
         },
@@ -5442,6 +5645,9 @@ async fn new_session_requests_shutdown_for_previous_conversation() {
             rollout_path: Some(PathBuf::new()),
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
         };
 
         app.chat_widget.handle_thread_session(event);
@@ -5857,6 +6063,9 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
             rollout_path: Some(PathBuf::new()),
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
         });
     app.chat_widget
         .apply_external_edit("draft prompt".to_string());
@@ -5916,6 +6125,46 @@ async fn clear_only_ui_reset_allows_active_skill_warning_to_render_again() {
         app.skill_load_warnings
             .newly_active_errors(std::slice::from_ref(&error)),
         vec![error]
+    );
+}
+
+#[test]
+fn clear_terminal_for_thread_switch_clears_prior_thread_scrollback() {
+    let width: u16 = 24;
+    let height: u16 = 8;
+    let backend = VT100Backend::new(width, height);
+    let mut terminal = CustomTerminal::with_options(backend).expect("terminal");
+    terminal.set_viewport_area(Rect::new(
+        /*x*/ 0,
+        /*y*/ height - 2,
+        /*width*/ width,
+        /*height*/ 2,
+    ));
+
+    crate::insert_history::insert_history_lines(
+        &mut terminal,
+        vec![Line::from("prior thread history")],
+    )
+    .expect("insert history");
+    assert!(terminal.visible_history_rows() > 0);
+    let rows_before: Vec<String> = terminal.backend().vt100().screen().rows(0, width).collect();
+    assert!(
+        rows_before
+            .iter()
+            .any(|row| row.contains("prior thread history")),
+        "expected old thread history before clear, rows: {rows_before:?}"
+    );
+
+    App::clear_terminal_for_thread_switch(&mut terminal).expect("clear thread switch terminal");
+
+    assert_eq!(terminal.viewport_area.y, 0);
+    assert_eq!(terminal.visible_history_rows(), 0);
+    let rows_after: Vec<String> = terminal.backend().vt100().screen().rows(0, width).collect();
+    assert!(
+        !rows_after
+            .iter()
+            .any(|row| row.contains("prior thread history")),
+        "expected prior thread history to be cleared, rows: {rows_after:?}"
     );
 }
 

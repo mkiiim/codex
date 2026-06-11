@@ -166,6 +166,7 @@ use super::footer::FooterMode;
 use super::footer::FooterProps;
 use super::footer::GoalStatusIndicator;
 use super::footer::SummaryLeft;
+use super::footer::branch_context_line;
 use super::footer::can_show_left_with_context;
 use super::footer::context_window_line;
 use super::footer::esc_hint_mode;
@@ -504,6 +505,7 @@ impl ChatComposer {
                 status_line_value: None,
                 status_line_hyperlink_url: None,
                 status_line_enabled: false,
+                branch_context_label: None,
                 side_conversation_context_label: None,
                 active_agent_label: None,
                 external_editor_key: Some(key_hint::ctrl(KeyCode::Char('g'))),
@@ -3421,6 +3423,7 @@ impl ChatComposer {
             is_wsl,
             status_line_value: self.footer.status_line_value.clone(),
             status_line_enabled: self.footer.status_line_enabled,
+            branch_context_label: self.footer.branch_context_label.clone(),
             key_hints: FooterKeyHints {
                 toggle_shortcuts: self.footer.toggle_shortcuts_key,
                 queue: self.footer.queue_key,
@@ -3926,6 +3929,14 @@ impl ChatComposer {
         true
     }
 
+    pub(crate) fn set_branch_context_label(&mut self, label: Option<String>) -> bool {
+        if self.footer.branch_context_label == label {
+            return false;
+        }
+        self.footer.branch_context_label = label;
+        true
+    }
+
     /// Replaces the contextual footer label for the currently viewed agent.
     ///
     /// Returning `false` means the value was unchanged, so callers can skip redraw work. This
@@ -4157,7 +4168,7 @@ impl ChatComposer {
                 popup.render_ref(popup_rect, buf);
             }
             ActivePopup::None => {
-                let footer_props = self.footer_props();
+                let mut footer_props = self.footer_props();
                 let show_cycle_hint = !footer_props.is_task_running
                     && self.footer.collaboration_mode_indicator.is_some();
                 let show_shortcuts_hint = match footer_props.mode {
@@ -4189,6 +4200,18 @@ impl ChatComposer {
                     hint_rect
                 } else {
                     popup_rect
+                };
+                let hint_rect = if let Some(line) = branch_context_line(&footer_props) {
+                    let [branch_rect, remainder] = Layout::vertical([
+                        Constraint::Length(1),
+                        Constraint::Length(hint_rect.height.saturating_sub(1)),
+                    ])
+                    .areas(hint_rect);
+                    render_footer_line(branch_rect, buf, line);
+                    footer_props.branch_context_label = None;
+                    remainder
+                } else {
+                    hint_rect
                 };
                 if let Some(line) = self.history_search_footer_line() {
                     render_footer_line(hint_rect, buf, line);
@@ -4279,31 +4302,35 @@ impl ChatComposer {
                         can_show_left_with_context(hint_rect, left_width, right_width);
                     let has_override =
                         self.footer.flash_visible() || active_footer_hint_override.is_some();
-                    let single_line_layout = if has_override || status_line_active {
-                        None
-                    } else {
-                        match footer_props.mode {
-                            FooterMode::ComposerEmpty | FooterMode::ComposerHasDraft => {
-                                // Both of these modes render the single-line footer style (with
-                                // either the shortcuts hint or the optional queue hint). We still
-                                // want the single-line collapse rules so the mode label can win over
-                                // the context indicator on narrow widths.
-                                Some(single_line_footer_layout(
-                                    hint_rect,
-                                    right_width,
-                                    left_mode_indicator,
-                                    show_cycle_hint,
-                                    show_shortcuts_hint,
-                                    show_queue_hint,
-                                    footer_props.key_hints,
-                                ))
+                    let stacked_branch_footer = footer_props.branch_context_label.is_some()
+                        && (status_line_active
+                            || matches!(footer_props.mode, FooterMode::ComposerHasDraft));
+                    let single_line_layout =
+                        if has_override || status_line_active || stacked_branch_footer {
+                            None
+                        } else {
+                            match footer_props.mode {
+                                FooterMode::ComposerEmpty | FooterMode::ComposerHasDraft => {
+                                    // Both of these modes render the single-line footer style (with
+                                    // either the shortcuts hint or the optional queue hint). We still
+                                    // want the single-line collapse rules so the mode label can win over
+                                    // the context indicator on narrow widths.
+                                    Some(single_line_footer_layout(
+                                        hint_rect,
+                                        right_width,
+                                        left_mode_indicator,
+                                        show_cycle_hint,
+                                        show_shortcuts_hint,
+                                        show_queue_hint,
+                                        footer_props.key_hints,
+                                    ))
+                                }
+                                FooterMode::EscHint
+                                | FooterMode::HistorySearch
+                                | FooterMode::QuitShortcutReminder
+                                | FooterMode::ShortcutOverlay => None,
                             }
-                            FooterMode::EscHint
-                            | FooterMode::HistorySearch
-                            | FooterMode::QuitShortcutReminder
-                            | FooterMode::ShortcutOverlay => None,
-                        }
-                    };
+                        };
                     let show_right = if matches!(
                         footer_props.mode,
                         FooterMode::EscHint
@@ -4678,6 +4705,19 @@ mod tests {
             /*width*/ 100,
             enhanced_keys_supported,
             setup,
+        );
+    }
+
+    #[test]
+    fn branch_context_footer_renders_in_live_composer() {
+        snapshot_composer_state(
+            "composer_branch_context_footer",
+            /*enhanced_keys_supported*/ false,
+            |composer| {
+                composer.set_branch_context_label(Some(
+                    "Child branch d1 · face · \"...fee rules.\" · Esc to return".to_string(),
+                ));
+            },
         );
     }
 

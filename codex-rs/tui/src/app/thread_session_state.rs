@@ -93,6 +93,9 @@ impl App {
                 fork_parent_title: None,
                 branch_depth: None,
                 branch_anchor_summary: None,
+                branch_anchor_head_summary: None,
+                branch_anchor_tail_summary: None,
+                branch_origin_snapshot: None,
                 thread_name: None,
                 model: self.chat_widget.current_model().to_string(),
                 model_provider_id: self.config.model_provider_id.clone(),
@@ -196,6 +199,9 @@ mod tests {
             rollout_path: Some(PathBuf::new()),
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
         }
     }
 
@@ -433,6 +439,9 @@ mod tests {
             name: Some("read thread".to_string()),
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
             turns: Vec::new(),
         };
 

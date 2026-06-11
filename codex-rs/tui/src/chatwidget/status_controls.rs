@@ -82,6 +82,22 @@ impl ChatWidget {
         self.bottom_pane.set_active_agent_label(active_agent_label);
     }
 
+    pub(crate) fn set_branch_context_label(&mut self, label: Option<String>) {
+        self.bottom_pane.set_branch_context_label(label);
+    }
+
+    pub(crate) fn sync_branch_context_footer(&mut self) {
+        let label = (self.branch_depth > 0).then(|| {
+            crate::branch_chrome::branch_context_label(
+                self.branch_depth,
+                self.thread_id,
+                self.branch_anchor_selection_summary.as_deref(),
+                self.branch_origin_snapshot.as_ref(),
+            )
+        });
+        self.set_branch_context_label(label);
+    }
+
     /// Recomputes footer status-line content from config and current runtime state.
     ///
     /// This method is the status-line orchestrator: it parses configured item identifiers,

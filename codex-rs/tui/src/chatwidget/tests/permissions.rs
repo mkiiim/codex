@@ -524,6 +524,9 @@ async fn required_windows_sandbox_setup_defers_configured_initial_prompt() {
         rollout_path: Some(PathBuf::new()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     });
     drain_insert_history(&mut rx);
 
@@ -935,6 +938,9 @@ async fn permissions_selection_marks_auto_review_current_after_session_configure
         rollout_path: Some(PathBuf::new()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     });
 
     chat.open_permissions_popup();
@@ -987,6 +993,9 @@ async fn permissions_selection_marks_auto_review_current_with_custom_workspace_w
         rollout_path: Some(PathBuf::new()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     });
 
     chat.open_permissions_popup();

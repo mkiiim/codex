@@ -1232,6 +1232,9 @@ enabled = false
                 rollout_path: Some(PathBuf::new()),
                 branch_depth: None,
                 branch_anchor_summary: None,
+                branch_anchor_head_summary: None,
+                branch_anchor_tail_summary: None,
+                branch_origin_snapshot: None,
             });
 
         assert_eq!(app.chat_widget.config_ref().cwd.to_path_buf(), next_cwd);

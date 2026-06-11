@@ -32,6 +32,7 @@ impl ChatWidget {
         self.current_goal_status = None;
         self.update_collaboration_mode_indicator();
         self.forked_from = session.forked_from_id;
+        self.branch_origin_snapshot = session.branch_origin_snapshot.clone();
         match session.branch_depth {
             Some(depth) if depth > 0 => {
                 self.branch_depth = depth as usize;
@@ -53,6 +54,7 @@ impl ChatWidget {
                 // the depth directly. Leave the existing value in place.
             }
         }
+        self.sync_branch_context_footer();
         self.current_rollout_path = session.rollout_path.clone();
         self.current_cwd = Some(session.cwd.to_path_buf());
         self.config.cwd = session.cwd.clone();

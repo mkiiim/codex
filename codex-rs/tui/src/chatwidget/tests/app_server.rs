@@ -59,6 +59,9 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
         rollout_path: None,
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     }
 }
 
@@ -334,6 +337,8 @@ async fn live_app_server_turn_completed_clears_working_status_after_answer_item(
             item: AppServerThreadItem::AgentMessage {
                 id: "msg-1".to_string(),
                 text: "Yes. What do you need?".to_string(),
+                source_text: Some("Yes. What do you need?".to_string()),
+                source_segments: Some(vec!["Yes. What do you need?".to_string()]),
                 phase: Some(MessagePhase::FinalAnswer),
                 memory_citation: None,
             },

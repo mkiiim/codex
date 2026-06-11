@@ -5,13 +5,14 @@
 
 use super::App;
 use super::AppRunControl;
+use super::OutgoingSessionSummary;
 use crate::app_event::BranchNavigatorSelectionKind;
 use crate::app_server_session::AppServerSession;
 use crate::app_server_session::BranchForkContext;
-use crate::resume_picker::SessionTarget;
 use crate::branch_chrome::BranchStateNoticeKind;
 use crate::branch_locator::BranchSnippetError;
 use crate::branch_locator::locate_branch_snippet;
+use crate::resume_picker::SessionTarget;
 use crate::tui;
 use codex_protocol::ThreadId;
 use color_eyre::eyre::Result;
@@ -113,20 +114,18 @@ impl App {
                                     branch_context.selection_summary.clone();
                                 self.chat_widget.branch_origin_snapshot =
                                     Some(branch_context.origin_snapshot.clone());
+                                self.chat_widget.sync_branch_context_footer();
 
+                                let suffix = self
+                                    .chat_widget
+                                    .thread_id()
+                                    .map(crate::branch_chrome::branch_thread_id_suffix)
+                                    .unwrap_or_default();
                                 let notice = BranchStateNoticeKind::BranchFrom {
                                     depth: branch_context.branch_depth,
                                     selection_summary: branch_context.selection_summary,
                                 };
-                                let title = crate::branch_chrome::branch_state_title(&notice);
-                                let body = crate::branch_chrome::branch_state_body(&notice);
-                                let mut lines = vec![title];
-                                if let Some(body) = body {
-                                    lines.push(body);
-                                }
-                                self.chat_widget.add_plain_history_lines(
-                                    lines.into_iter().map(|l| l.into()).collect(),
-                                );
+                                emit_branch_notice(&mut self.chat_widget, &notice, &suffix);
                             }
                             Err(err) => {
                                 self.chat_widget.add_error_message(format!(
@@ -161,12 +160,18 @@ impl App {
         self.refresh_in_memory_config_from_disk_best_effort("returning from branch")
             .await;
 
+        let child_thread_id = self.chat_widget.thread_id();
+        let child_anchor_summary = self.chat_widget.branch_anchor_summary().map(str::to_owned);
+        let child_branch_depth = self.chat_widget.branch_depth;
+        let child_token_usage = self.chat_widget.token_usage();
+        let child_usage_line =
+            (!child_token_usage.is_zero()).then(|| child_token_usage.to_string());
+
         match app_server
             .resume_thread(self.config.clone(), parent_thread_id)
             .await
         {
             Ok(resumed) => {
-                let branch_depth = self.chat_widget.branch_depth.saturating_sub(1);
                 self.shutdown_current_thread(app_server).await;
                 match self
                     .replace_chat_widget_with_app_server_thread(
@@ -175,11 +180,15 @@ impl App {
                     .await
                 {
                     Ok(()) => {
+                        let suffix = child_thread_id
+                            .map(crate::branch_chrome::branch_thread_id_suffix)
+                            .unwrap_or_default();
                         let notice = BranchStateNoticeKind::ReturnedToParent {
-                            depth: branch_depth + 1,
+                            depth: child_branch_depth,
+                            selection_summary: child_anchor_summary,
+                            previous_thread_usage_line: child_usage_line,
                         };
-                        let title = crate::branch_chrome::branch_state_title(&notice);
-                        self.chat_widget.add_plain_history_lines(vec![title.into()]);
+                        emit_branch_notice(&mut self.chat_widget, &notice, &suffix);
                     }
                     Err(err) => {
                         self.chat_widget
@@ -204,13 +213,28 @@ impl App {
         kind: BranchNavigatorSelectionKind,
     ) -> Result<AppRunControl> {
         let previous_branch_depth = self.chat_widget.branch_depth;
+        let previous_thread_id = self.chat_widget.thread_id();
+        let previous_anchor_summary = self.chat_widget.branch_anchor_summary().map(str::to_owned);
+        let previous_token_usage = self.chat_widget.token_usage();
+        let previous_usage_line =
+            (!previous_token_usage.is_zero()).then(|| previous_token_usage.to_string());
         let target_session = SessionTarget {
             path: None,
             thread_id,
         };
 
+        // For ReturnToAncestor navigations the "ReturnedToParent" notice below is the right
+        // signal; suppress the generic "Resumed" notice that resume_target_session would
+        // otherwise emit for any branch with depth > 0.
+        let emit_resumed_notice = kind != BranchNavigatorSelectionKind::ReturnToAncestor;
         match self
-            .resume_target_session(tui, app_server, target_session)
+            .resume_target_session(
+                tui,
+                app_server,
+                target_session,
+                emit_resumed_notice,
+                OutgoingSessionSummary::AddTokenUsageToBranchNotice,
+            )
             .await?
         {
             AppRunControl::Continue => {}
@@ -221,13 +245,27 @@ impl App {
             && kind == BranchNavigatorSelectionKind::ReturnToAncestor
             && previous_branch_depth > 0
         {
+            let suffix = previous_thread_id
+                .map(crate::branch_chrome::branch_thread_id_suffix)
+                .unwrap_or_default();
             let notice = BranchStateNoticeKind::ReturnedToParent {
                 depth: previous_branch_depth,
+                selection_summary: previous_anchor_summary,
+                previous_thread_usage_line: previous_usage_line,
             };
-            let title = crate::branch_chrome::branch_state_title(&notice);
-            self.chat_widget.add_plain_history_lines(vec![title.into()]);
+            emit_branch_notice(&mut self.chat_widget, &notice, &suffix);
         }
 
         Ok(AppRunControl::Continue)
     }
+}
+
+fn emit_branch_notice(
+    chat_widget: &mut crate::chatwidget::ChatWidget,
+    notice: &BranchStateNoticeKind,
+    thread_id_suffix: &str,
+) {
+    let title = crate::branch_chrome::branch_state_title(notice, thread_id_suffix);
+    let body_lines = crate::branch_chrome::branch_state_body(notice);
+    chat_widget.add_branch_state_notice(title, body_lines);
 }

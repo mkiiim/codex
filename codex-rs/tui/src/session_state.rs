@@ -34,6 +34,12 @@ pub(crate) struct ThreadSessionState {
     pub(crate) branch_depth: Option<u32>,
     /// Short anchor summary from the branch point, if recorded.
     pub(crate) branch_anchor_summary: Option<String>,
+    /// Summary of the assistant reply content preceding the branch point.
+    pub(crate) branch_anchor_head_summary: Option<String>,
+    /// Summary of the assistant reply content at and after the branch point.
+    pub(crate) branch_anchor_tail_summary: Option<String>,
+    /// Exact reply/offset metadata for the branch point.
+    pub(crate) branch_origin_snapshot: Option<codex_app_server_protocol::ThreadForkSnapshot>,
     pub(crate) thread_name: Option<String>,
     pub(crate) model: String,
     pub(crate) model_provider_id: String,

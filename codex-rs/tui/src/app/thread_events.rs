@@ -381,6 +381,9 @@ mod tests {
             rollout_path: Some(PathBuf::new()),
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
         }
     }
 

@@ -303,6 +303,7 @@ use crate::exec_command::split_command_string;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::get_git_diff::get_git_diff;
 use crate::history_cell;
+use crate::history_cell::BranchStateNoticeCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::HistoryRenderMode;
 use crate::history_cell::HookCell;
@@ -1528,6 +1529,11 @@ impl ChatWidget {
 
     pub(crate) fn add_plain_history_lines(&mut self, lines: Vec<Line<'static>>) {
         self.add_boxed_history(Box::new(PlainHistoryCell::new(lines)));
+        self.request_redraw();
+    }
+
+    pub(crate) fn add_branch_state_notice(&mut self, title: String, body_lines: Vec<String>) {
+        self.add_boxed_history(Box::new(BranchStateNoticeCell::new(title, body_lines)));
         self.request_redraw();
     }
 

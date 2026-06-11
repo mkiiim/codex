@@ -983,6 +983,9 @@ async fn bang_shell_enter_while_task_running_submits_run_user_shell_command() {
         rollout_path: Some(rollout_file.path().to_path_buf()),
         branch_depth: None,
         branch_anchor_summary: None,
+        branch_anchor_head_summary: None,
+        branch_anchor_tail_summary: None,
+        branch_origin_snapshot: None,
     };
     chat.handle_thread_session(configured);
     drain_insert_history(&mut rx);

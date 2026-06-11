@@ -148,6 +148,9 @@ mod tests {
             name: None,
             branch_depth: None,
             branch_anchor_summary: None,
+            branch_anchor_head_summary: None,
+            branch_anchor_tail_summary: None,
+            branch_origin_snapshot: None,
             turns: Vec::new(),
         }
     }

@@ -204,6 +204,7 @@ mod app_server_events;
 pub(crate) mod app_server_requests;
 mod background_requests;
 mod branch_commands;
+mod branch_markers;
 mod branching;
 mod config_persistence;
 mod event_dispatch;
@@ -502,6 +503,32 @@ struct InitialHistoryReplayBuffer {
     render_from_transcript_tail: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingDirectChildBranchMarker {
+    anchor_kind: PendingDirectChildBranchMarkerAnchor,
+    assistant_message_index: usize,
+    source_line_index: usize,
+    source_byte_offset: usize,
+    branch_depth: u32,
+    branch_id_suffix: String,
+    selection_summary: String,
+    unresolved_reason: Option<PendingDirectChildBranchMarkerUnresolvedReason>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingDirectChildBranchMarkerAnchor {
+    AssistantRead,
+    LatestAssistantRead,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingDirectChildBranchMarkerUnresolvedReason {
+    MissingRawMarkdown,
+    SourcePositionCouldNotBeMapped,
+    MappedSourceLineOutsideCurrentCell,
+    NeverMatchedAssistantMessageCell,
+}
+
 pub(crate) struct App {
     model_catalog: Arc<ModelCatalog>,
     pub(crate) session_telemetry: SessionTelemetry,
@@ -578,6 +605,10 @@ pub(crate) struct App {
     primary_session_configured: Option<ThreadSessionState>,
     pending_primary_events: VecDeque<ThreadBufferedEvent>,
     pending_app_server_requests: PendingAppServerRequests,
+    pending_direct_child_branch_markers: Vec<PendingDirectChildBranchMarker>,
+    next_assistant_history_cell_index: usize,
+    current_assistant_message_source_line_offset: usize,
+    current_assistant_message_source_byte_offset: usize,
     pending_startup_thread_start: bool,
     // Serialize plugin enablement writes per plugin so stale completions cannot
     // overwrite a newer toggle, even if the plugin is toggled from different
@@ -1047,6 +1078,10 @@ See the Codex keymap documentation for supported actions and examples."
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
+            pending_direct_child_branch_markers: Vec::new(),
+            next_assistant_history_cell_index: 0,
+            current_assistant_message_source_line_offset: 0,
+            current_assistant_message_source_byte_offset: 0,
             pending_startup_thread_start,
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
@@ -1057,6 +1092,8 @@ See the Codex keymap documentation for supported actions and examples."
         let initial_session_started_at = Instant::now();
         if let Some(started) = initial_started_thread {
             let thread_id = started.session.thread_id;
+            app.prepare_direct_child_branch_markers(&mut app_server, thread_id)
+                .await;
             app.enqueue_primary_thread_session(started.session, started.turns)
                 .await?;
             if should_prompt_for_paused_goal_after_startup_resume {

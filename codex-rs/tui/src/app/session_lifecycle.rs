@@ -425,6 +425,8 @@ impl App {
         self.replace_chat_widget(ChatWidget::new_with_app_event(init));
 
         self.reset_for_thread_switch(tui)?;
+        self.prepare_direct_child_branch_markers(app_server, thread_id)
+            .await;
         self.replay_thread_snapshot(snapshot, !is_replay_only);
         if is_replay_only {
             let message = if attached_replay_only {
@@ -484,6 +486,10 @@ impl App {
         self.primary_session_configured = None;
         self.pending_primary_events.clear();
         self.pending_app_server_requests.clear();
+        self.pending_direct_child_branch_markers.clear();
+        self.next_assistant_history_cell_index = 0;
+        self.current_assistant_message_source_line_offset = 0;
+        self.current_assistant_message_source_byte_offset = 0;
         self.pending_startup_thread_start = false;
         self.chat_widget.set_pending_thread_approvals(Vec::new());
         self.sync_active_agent_label();
@@ -615,6 +621,8 @@ impl App {
         // transcript cells, or scrolling up after the switch can still reveal stale history from
         // the previous thread.
         self.reset_for_thread_switch(tui)?;
+        self.prepare_direct_child_branch_markers(app_server, started.session.thread_id)
+            .await;
         self.enqueue_primary_thread_session(started.session, started.turns)
             .await?;
         self.backfill_loaded_subagent_threads(app_server).await;

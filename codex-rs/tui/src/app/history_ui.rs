@@ -111,6 +111,10 @@ impl App {
         self.has_emitted_history_lines = false;
         self.transcript_reflow.clear();
         self.initial_history_replay_buffer = None;
+        self.pending_direct_child_branch_markers.clear();
+        self.next_assistant_history_cell_index = 0;
+        self.current_assistant_message_source_line_offset = 0;
+        self.current_assistant_message_source_byte_offset = 0;
         self.backtrack = BacktrackState::default();
         self.backtrack_render_pending = false;
         self.skill_load_warnings.clear();

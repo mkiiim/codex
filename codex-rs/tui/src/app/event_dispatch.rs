@@ -256,6 +256,8 @@ impl App {
                 self.begin_thread_switch_history_replay_buffer();
             }
             AppEvent::InsertHistoryCell(cell) => {
+                let mut cell = cell;
+                self.decorate_inserted_agent_history_cell(cell.as_mut());
                 let cell: Arc<dyn HistoryCell> = cell.into();
                 if let Some(Overlay::Transcript(t)) = &mut self.overlay {
                     t.insert_cell(cell.clone());
@@ -280,6 +282,9 @@ impl App {
             }
             AppEvent::EndInitialHistoryReplayBuffer => {
                 self.finish_initial_history_replay_buffer(tui);
+            }
+            AppEvent::FlushUnresolvedDirectChildBranchMarkers => {
+                self.flush_unresolved_direct_child_branch_markers();
             }
             AppEvent::ConsolidateAgentMessage {
                 source,

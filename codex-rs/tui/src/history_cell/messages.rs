@@ -272,6 +272,7 @@ pub(crate) struct AgentMessageCell {
     is_first_line: bool,
     raw_markdown: Option<String>,
     source_segments: Option<Vec<String>>,
+    branch_markers: Vec<AgentBranchMarker>,
 }
 
 impl AgentMessageCell {
@@ -286,6 +287,7 @@ impl AgentMessageCell {
             is_first_line,
             raw_markdown: None,
             source_segments: None,
+            branch_markers: Vec::new(),
         }
     }
 
@@ -299,6 +301,7 @@ impl AgentMessageCell {
             is_first_line,
             raw_markdown,
             source_segments: None,
+            branch_markers: Vec::new(),
         }
     }
 
@@ -314,6 +317,13 @@ impl AgentMessageCell {
         self.source_segments = source_segments;
     }
 
+    pub(crate) fn source_lines_plain_text(&self) -> Vec<String> {
+        super::branch_markers::source_lines_plain_text(&self.lines)
+    }
+
+    pub(crate) fn add_branch_marker(&mut self, marker: AgentBranchMarker) {
+        super::branch_markers::add_branch_marker(&mut self.branch_markers, marker);
+    }
 }
 
 impl HistoryCell for AgentMessageCell {
@@ -323,22 +333,32 @@ impl HistoryCell for AgentMessageCell {
 
     fn display_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
         let mut wrapped = Vec::new();
-        for (index, line) in self.lines.iter().enumerate() {
-            let initial_indent = if index == 0 && self.is_first_line {
-                "• ".dim().into()
-            } else {
-                "  ".into()
-            };
-            let mut subsequent_indent = Line::from("  ");
-            subsequent_indent
-                .spans
-                .extend(crate::insert_history::leading_whitespace_prefix(&line.line).spans);
-            wrapped.extend(crate::terminal_hyperlinks::adaptive_wrap_hyperlink_lines(
-                std::slice::from_ref(line),
-                RtOptions::new(width as usize)
-                    .initial_indent(initial_indent)
-                    .subsequent_indent(subsequent_indent),
-            ));
+        for display_line in super::branch_markers::display_source_lines(
+            &self.lines,
+            self.is_first_line,
+            &self.branch_markers,
+        ) {
+            match display_line.kind {
+                AgentDisplayLineKind::Message { use_agent_bullet } => {
+                    let initial_indent = if use_agent_bullet {
+                        "• ".dim().into()
+                    } else {
+                        "  ".into()
+                    };
+                    let mut subsequent_indent = Line::from("  ");
+                    subsequent_indent.spans.extend(
+                        crate::insert_history::leading_whitespace_prefix(&display_line.line.line)
+                            .spans,
+                    );
+                    wrapped.extend(crate::terminal_hyperlinks::adaptive_wrap_hyperlink_lines(
+                        std::slice::from_ref(&display_line.line),
+                        RtOptions::new(width as usize)
+                            .initial_indent(initial_indent)
+                            .subsequent_indent(subsequent_indent),
+                    ));
+                }
+                AgentDisplayLineKind::BranchChrome => wrapped.push(display_line.line),
+            }
         }
         wrapped
     }
